@@ -16,7 +16,7 @@ This script was mainly created with the help of AI (Gemini and ChatGPT) as a way
 
 That process helped with:
 
-- designing the sync logib
+- designing the sync logic
 - iterating on edge cases
 - testing behavior against the Proton Drive CLI
 - improving robustness over several revisions
