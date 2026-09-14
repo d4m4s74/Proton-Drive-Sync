@@ -20,7 +20,7 @@ That process helped with:
 - iterating on edge cases
 - testing behavior against the Proton Drive CLI
 - improving robustness over several revisions
-- working around "unintended features" in the ChatGPT interface (just for fun, try asking ChatGPT to generate a readme.md file)
+- working around "unintended features" (interface leaks) in the ChatGPT interface (just for fun, try asking ChatGPT to generate a readme.md file)
 
 ## Prep
 
