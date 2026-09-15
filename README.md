@@ -27,24 +27,24 @@ That process helped with:
 Before running the script for the first time:
 1. Make sure the Proton Drive CLI is installed and if necessary modify the `PROTON_BIN` variable to point to its location.
 2. Authenticate with Proton Drive:
-
+```
     ./proton-drive auth login
-
+```
     This will open your browser so you can sign in.
 
  3. If your environment does not have a working keyring / secret store, uncomment these lines in the script:
-
+```
     export PROTON_DRIVE_CREDENTIALS_STORE=unsafe_file
     export PROTON_DRIVE_CACHE_DIR="$HOME/.config/proton-drive-cli"
-
+```
 4. Make sure the remote backup folder exists or modify the `REMOTE_BACKUP_DIR` variable:
-
+```
     /my-files/backup
-
+```
 5. Make sure the local backup folder exists or modify the `LOCAL_BACKUP_DIR` variable:
-
+```
     /srv/data/backup
-
+```
 ## Usage
 
 You can run the script manually:
