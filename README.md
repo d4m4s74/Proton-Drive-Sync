@@ -25,7 +25,7 @@ That process helped with:
 ## Prep
 
 Before running the script for the first time:
-1. Make sure the Proton Drive CLI is installed.
+1. Make sure the Proton Drive CLI is installed and if necessary modify the `PROTON_BIN` variable to point to its location.
 2. Authenticate with Proton Drive:
 
     ./proton-drive auth login
@@ -37,11 +37,11 @@ Before running the script for the first time:
     export PROTON_DRIVE_CREDENTIALS_STORE=unsafe_file
     export PROTON_DRIVE_CACHE_DIR="$HOME/.config/proton-drive-cli"
 
-4. Make sure the remote backup folder exists:
+4. Make sure the remote backup folder exists or modify the `REMOTE_BACKUP_DIR` variable:
 
     /my-files/backup
 
-5. Make sure the local backup folder exists:
+5. Make sure the local backup folder exists or modify the `LOCAL_BACKUP_DIR` variable:
 
     /srv/data/backup
 
@@ -65,7 +65,7 @@ Open your crontab editor with:
 
 Then add a line like this:
 
-    0 2 * * * /srv/proton_drive_sync.sh
+    0 2 * * * /foo/bar/proton_drive_sync.sh
 
 This means:
 
@@ -81,18 +81,18 @@ So the script will run every night at 2:00 AM.
 
 If you want to save output to a log file, you can redirect stdout and stderr:
 
-    0 2 * * * /srv/proton_drive_sync.sh >> /srv/proton_backup.log 2>&1
+    0 2 * * * /foo/bar/proton_drive_sync.sh >> /foo/bar/proton_backup.log 2>&1
 
 That means:
 
-- `>> /srv/proton_backup.log` appends normal output to the log 
+- `>> /foo/bar/proton_backup.log` appends normal output to the log 
 - `2>&1` sends error output into the same log file
 
 ## State file
 
 The script keeps a local state file here:
 
-    /srv/data/backup/.proton_sync_state
+    ${LOCAL_BACKUP_DIR}/.proton_sync_state
 
 This file lets the script detect what changed since the previous run.
 
