@@ -2,6 +2,13 @@
 # Sync /srv/data/backup to Proton Drive /my-files/backup
 # Tracks files and directories locally to detect changes and deletions.
 # If you do not have a working keyring / secret store, uncomment the unsafe_file lines below.
+#
+# Behavior:
+#   - New folder trees are uploaded as whole folders
+#   - Existing folders upload changed files individually
+#   - Deleted files/folders are trashed remotely
+#   - Proton JSON output is used for uploads
+#   - New state is only committed if there were no real errors
 
 # Uncomment if your environment has no usable keyring / secret store:
 # export PROTON_DRIVE_CREDENTIALS_STORE=unsafe_file
@@ -34,37 +41,47 @@ sort_paths_desc() {
     awk '{ print length, $0 }' | sort -rn | sed 's/^[0-9][0-9]* //'
 }
 
-log "=== Starting Proton Drive sync evaluation ==="
+json_failed_items() {
+    jq -r '.failedItems // empty' 2>/dev/null || true
+}
 
-if [[ ! -d "$LOCAL_BACKUP_DIR" ]]; then
-    log "ERROR: Backup directory does not exist: $LOCAL_BACKUP_DIR" >&2
-    exit 1
-fi
+upload_file_json() {
+    local local_file="$1"
+    local remote_parent="$2"
+    local json
+    local failed
 
-if [[ ! -x "$PROTON_BIN" ]]; then
-    log "ERROR: Proton Drive CLI not found or not executable: $PROTON_BIN" >&2
-    exit 1
-fi
+    json="$("$PROTON_BIN" filesystem upload -f replace -j "$local_file" "$remote_parent" 2>/dev/null || true)"
+    failed="$(printf '%s\n' "$json" | json_failed_items)"
 
-: > "$TEMP_STATE_FILE"
+    if [[ -n "$failed" && "$failed" == "0" ]]; then
+        log "Proton JSON (file upload success): $json"
+        return 0
+    fi
 
-declare -A old_files=()
-declare -A old_dirs=()
+    log "WARN: Upload failed for file: $local_file"
+    log "      Proton JSON: $json"
+    return 1
+}
 
-if [[ -f "$STATE_FILE" ]]; then
-    while IFS='|' read -r kind path stat; do
-        [[ -n "${kind:-}" ]] || continue
-        case "$kind" in
-            F) old_files["$path"]="$stat" ;;
-            D) old_dirs["$path"]=1 ;;
-        esac
-    done < "$STATE_FILE"
-fi
+upload_dir_json() {
+    local local_dir="$1"
+    local remote_parent="$2"
+    local json
+    local failed
 
-declare -A current_files=()
-declare -A current_dirs=()
-declare -A changed_root_files=()
-declare -A changed_dirs=()
+    json="$("$PROTON_BIN" filesystem upload -f replace -d merge -j "$local_dir" "$remote_parent" 2>/dev/null || true)"
+    failed="$(printf '%s\n' "$json" | json_failed_items)"
+
+    if [[ -n "$failed" && "$failed" == "0" ]]; then
+        log "Proton JSON (dir upload success): $json"
+        return 0
+    fi
+
+    log "WARN: Upload failed for directory: $local_dir"
+    log "      Proton JSON: $json"
+    return 1
+}
 
 to_remote_dir() {
     local local_dir="$1"
@@ -87,6 +104,19 @@ to_remote_parent_for_upload() {
         remote_dir="$(to_remote_dir "$local_dir")"
         dirname "$remote_dir"
     fi
+}
+
+# If a parent directory has already been uploaded as a new tree,
+# skip child directories under it.
+is_under_uploaded_parent() {
+    local dir="$1"
+    local parent
+    for parent in "${uploaded_dirs[@]}"; do
+        if [[ "$dir" == "$parent" || "$dir" == "$parent"/* ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 ensure_remote_dir() {
@@ -116,17 +146,40 @@ ensure_remote_dir() {
     done
 }
 
-is_under_uploaded_parent() {
-    local dir="$1"
-    local parent
-    for parent in "${uploaded_dirs[@]}"; do
-        if [[ "$dir" == "$parent" || "$dir" == "$parent"/* ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
+log "=== Starting Proton Drive sync evaluation ==="
 
+if [[ ! -d "$LOCAL_BACKUP_DIR" ]]; then
+    log "ERROR: Backup directory does not exist: $LOCAL_BACKUP_DIR" >&2
+    exit 1
+fi
+
+if [[ ! -x "$PROTON_BIN" ]]; then
+    log "ERROR: Proton Drive CLI not found or not executable: $PROTON_BIN" >&2
+    exit 1
+fi
+
+: > "$TEMP_STATE_FILE"
+
+declare -A old_files=()
+declare -A old_dirs=()
+
+if [[ -f "$STATE_FILE" ]]; then
+    while IFS='|' read -r kind path stat; do
+        [[ -n "${kind:-}" ]] || continue
+        case "$kind" in
+            F) old_files["$path"]="$stat" ;;
+            D) old_dirs["$path"]=1 ;;
+        esac
+    done < "$STATE_FILE"
+fi
+
+declare -A current_files=()
+declare -A current_dirs=()
+declare -A new_dirs=()
+declare -A changed_root_files=()
+declare -A changed_files=()
+
+# Scan local tree and classify what changed
 while IFS= read -r -d '' path; do
     [[ "$path" == "$STATE_FILE" ]] && continue
     [[ "$path" == "$TEMP_STATE_FILE" ]] && continue
@@ -140,16 +193,23 @@ while IFS= read -r -d '' path; do
 
         if [[ "$current_stat" != "$stored_stat" ]]; then
             log "Changed file: $relpath"
-
             parent_dir="$(dirname "$path")"
+            parent_rel="${parent_dir#"$LOCAL_BACKUP_DIR"/}"
+
             if [[ "$parent_dir" == "$LOCAL_BACKUP_DIR" ]]; then
                 changed_root_files["$path"]=1
             else
-                changed_dirs["$parent_dir"]=1
+                # If parent dir didn't exist before, treat this as part of a new tree
+                if [[ -z "${old_dirs[$parent_rel]+x}" ]]; then
+                    new_dirs["$parent_dir"]=1
+                else
+                    changed_files["$path"]=1
+                fi
             fi
         fi
 
         printf 'F|%s|%s\n' "$relpath" "$current_stat" >> "$TEMP_STATE_FILE"
+
     elif [[ -d "$path" ]]; then
         relpath="${path#"$LOCAL_BACKUP_DIR"/}"
         [[ -z "$relpath" ]] && continue
@@ -158,6 +218,14 @@ while IFS= read -r -d '' path; do
     fi
 done < <(find "$LOCAL_BACKUP_DIR" -mindepth 1 -print0)
 
+# Detect newly created directories (not present in old state)
+for relpath in "${!current_dirs[@]}"; do
+    if [[ -z "${old_dirs[$relpath]+x}" ]]; then
+        new_dirs["$LOCAL_BACKUP_DIR/$relpath"]=1
+    fi
+done
+
+# Detect deleted directories
 declare -a deleted_dirs=()
 for relpath in "${!old_dirs[@]}"; do
     if [[ -z "${current_dirs[$relpath]+x}" ]]; then
@@ -182,6 +250,7 @@ if [[ "${#deleted_dirs[@]}" -gt 0 ]]; then
     done
 fi
 
+# Detect deleted files, but skip those already covered by deleted folders
 declare -a deleted_files=()
 for relpath in "${!old_files[@]}"; do
     if [[ -z "${current_files[$relpath]+x}" ]]; then
@@ -216,23 +285,14 @@ if [[ "${#deleted_files[@]}" -gt 0 ]]; then
     done
 fi
 
-for file in "${!changed_root_files[@]}"; do
-    log "Uploading root-level file: $file"
-    if "$PROTON_BIN" filesystem upload -f replace "$file" "$REMOTE_BACKUP_DIR" >/dev/null; then
-        ((files_uploaded++))
-    else
-        log "WARN: Upload failed for file: $file"
-        ((errors++))
-    fi
-done
-
+# Upload any newly created folder trees first
 uploaded_dirs=()
-if [[ "${#changed_dirs[@]}" -gt 0 ]]; then
-    mapfile -t dirs_sorted < <(
-        printf '%s\n' "${!changed_dirs[@]}" | sort_paths_asc
+if [[ "${#new_dirs[@]}" -gt 0 ]]; then
+    mapfile -t new_dirs_sorted < <(
+        printf '%s\n' "${!new_dirs[@]}" | sort_paths_asc
     )
 
-    for local_dir in "${dirs_sorted[@]}"; do
+    for local_dir in "${new_dirs_sorted[@]}"; do
         if is_under_uploaded_parent "$local_dir"; then
             continue
         fi
@@ -240,11 +300,10 @@ if [[ "${#changed_dirs[@]}" -gt 0 ]]; then
         remote_upload_parent="$(to_remote_parent_for_upload "$local_dir")"
         ensure_remote_dir "$remote_upload_parent"
 
-        log "Uploading directory: $local_dir -> $remote_upload_parent"
-        if "$PROTON_BIN" filesystem upload -f replace -d merge "$local_dir" "$remote_upload_parent" >/dev/null; then
+        log "Uploading new directory: $local_dir -> $remote_upload_parent"
+        if upload_dir_json "$local_dir" "$remote_upload_parent"; then
             ((folders_uploaded++))
         else
-            log "WARN: Upload failed for directory: $local_dir"
             ((errors++))
         fi
 
@@ -252,6 +311,30 @@ if [[ "${#changed_dirs[@]}" -gt 0 ]]; then
     done
 fi
 
+# Upload changed files in existing directories
+if [[ "${#changed_files[@]}" -gt 0 ]]; then
+    for file in "${!changed_files[@]}"; do
+        log "Uploading changed file: $file"
+
+        parent_dir="$(dirname "$file")"
+        if [[ "$parent_dir" == "$LOCAL_BACKUP_DIR" ]]; then
+            remote_parent="$REMOTE_BACKUP_DIR"
+        else
+            rel_dir="${parent_dir#"$LOCAL_BACKUP_DIR"/}"
+            remote_parent="${REMOTE_BACKUP_DIR}/${rel_dir}"
+        fi
+
+        ensure_remote_dir "$remote_parent"
+
+        if upload_file_json "$file" "$remote_parent"; then
+            ((files_uploaded++))
+        else
+            ((errors++))
+        fi
+    done
+fi
+
+# Commit state only if there were no real errors
 if [[ "$errors" -eq 0 ]]; then
     if mv -f "$TEMP_STATE_FILE" "$STATE_FILE"; then
         :
@@ -264,6 +347,7 @@ else
     rm -f "$TEMP_STATE_FILE"
 fi
 
+# Optional keepalive
 if [[ "$folders_created" -eq 0 && "$files_uploaded" -eq 0 && "$folders_uploaded" -eq 0 && "$files_removed" -eq 0 && "$folders_removed" -eq 0 && "$errors" -eq 0 ]]; then
     "$PROTON_BIN" filesystem list /my-files >/dev/null 2>&1 || true
 fi
