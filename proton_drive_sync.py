@@ -73,7 +73,14 @@ if 'proton_drive_cache_dir' in config:
 if 'unsafe_login' in config and config['unsafe_login'] == True:
     os.environ['PROTON_DRIVE_CREDENTIALS_STORE'] = "unsafe_file"
 STATE_FILE_NAME = ".proton_sync_state"
-STATE_FILE = os.path.join(LOCAL_DIR,STATE_FILE_NAME)
+STATE_FILE_NAME = ".proton_sync_state"
+
+# Check for the explicit Docker image environment flag
+if os.environ.get("AM_I_DOCKER") == "true":
+    STATE_FILE = os.path.join("./.cache", STATE_FILE_NAME) # Locked to persistent container volume
+else:
+    STATE_FILE = os.path.join(LOCAL_DIR, STATE_FILE_NAME)  # Clean native host filesystem fallback
+
 EMPTY_TRASH = config.get('empty_trash', False)
 
 #Test command to see if logged in

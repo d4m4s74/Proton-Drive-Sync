@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  proton-sync:
+    image: image: d4m4s74/proton-drive-sync:latest
+    container_name: proton-sync
+    restart: unless-stopped
+    environment:
+      - INTERVAL_HOURS=24
+      # - START_HOUR=2          # Optional: Un-comment to align initial run (e.g., 2 AM)
+      - REMOTE_DIR=/my-files/server_backup/production
+      - EMPTY_TRASH=false       # Optional: Set to true to purge remote trash post-sync
+    volumes:
+      # Map your host local backup source folder to the container's data workspace
+      - /path/to/backup:/data/backup:ro
+      # Map a host directory to persist the Proton authentication token across restarts
+      - ./Proton-Drive-Sync/cache:/app/.cache
