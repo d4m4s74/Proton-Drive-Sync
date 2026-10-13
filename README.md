@@ -34,6 +34,35 @@ empty_trash = false   # Set to true to automatically purge the remote trash fold
 ```
 *The configuration parser naturally interprets and resolves both `${HOME}` (user profile paths) and `${SCRIPT_DIR}` (the local directory hosting the script file) for local_dir, proton_drive_binary and proton_drive_cache_dir.*
 
+## Pre-Backup Hooks (Optional)
+
+The sync engine natively supports executing an optional custom shell script immediately before the synchronization cycle begins. This is ideal for performing local database dumps, hot backups, or service snapshot maintenance tasks right before the code maps files to the cloud.
+
+If a script file named `before_run.sh` is placed inside the same directory as `proton_drive_sync.py`, it will be executed automatically.
+
+### Example: Vaultwarden SQLite Hot Backups
+Create a `before_run.sh` file:
+```bash
+nano before_run.sh
+```
+
+Paste your automated shell commands (Ensure the file begins with a proper Shebang interpreter declaration):
+```bash
+#!/bin/bash
+# Get the numeric day of the week (1-7)
+DAY_OF_WEEK=$(date +%u)
+
+# Create an online hot-copy copy of your live Vaultwarden database
+sqlite3 /path/to/vaultwarden/db.sqlite3 ".backup '/path/to/backup/db_vault_day_${DAY_OF_WEEK}.sqlite3'"
+```
+
+Make the hook file executable on your server:
+```bash
+chmod +x before_run.sh
+```
+*Note: If the `before_run.sh` script exits with an error status code (anything other than `0`), the master Python engine will automatically abort the synchronization process to protect your remote cloud backups from corruption.*
+
+
 ## Migrating from the old bash script
 
 The structure of the .proton_sync_state file from the old script is incompatible with the one from the new script. Delete it and do one full run. Proton Drive CLI will automatically disregard unmodified files after uploading. 

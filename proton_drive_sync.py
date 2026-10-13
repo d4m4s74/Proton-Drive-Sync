@@ -44,6 +44,27 @@ logging.basicConfig(
     handlers=log_handlers
 )
 
+# Run hook script before running bakup
+BEFORE_RUN_SCRIPT = os.path.join(SCRIPT_DIR, "before_run.sh")
+
+# Check if the file exists
+if os.path.exists(BEFORE_RUN_SCRIPT):
+    logging.info(f"Found pre-backup hook script. Executing: {BEFORE_RUN_SCRIPT}")
+    
+    # Run the script
+    hook_result = subprocess.run([BEFORE_RUN_SCRIPT], capture_output=True, text=True)
+    logging.debug(f"Pre-backup hook execution results: {hook_result}")
+    
+    # If the hook script fails (exit code not 0) halt sync to protect data!
+    if hook_result.returncode != 0:
+        logging.error(
+            f"Pre-backup hook failed (Exit Code {hook_result.returncode}). Aborting sync execution!\n"
+            f"Stderr: {hook_result.stderr}"
+        )
+        sys.exit(1)
+        
+    logging.info("Pre-backup hook completed successfully. Proceeding with sync.")
+
 LOCAL_DIR = config['local_dir'].replace("${SCRIPT_DIR}", SCRIPT_DIR).replace("${HOME}", HOME_DIR)
 PROTON_DRIVE_BINARY = config['proton_drive_binary'].replace("${SCRIPT_DIR}", SCRIPT_DIR).replace("${HOME}", HOME_DIR)
 REMOTE_DIR = config['remote_dir']
