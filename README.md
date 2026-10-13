@@ -143,7 +143,7 @@ services:
       # Map your host local backup source folder to the container's data workspace as Read-Only
       - /path/to/your/local/backup:/data/backup:ro
       # Map a local folder to persist your authentication and state file across updates
-      - ./cache:/app/.cache
+      - ./proton_sync:/app/.cache
 ```
 
 Launch the container infrastructure:
