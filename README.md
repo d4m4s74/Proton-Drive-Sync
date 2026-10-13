@@ -12,8 +12,8 @@ This application synchronizes a local backup folder to Proton Drive.
 
 ## About this project
 
-This is a full manual rewrite of my original vibe coded Proton Drive Sync script.
-I have designed and written the logic myself, though I have used AI (Gemini) as a rubber duck and to find out about commands I haven't used before.
+This is a full manual rewrite of my original vibe coded Proton Drive Sync script  
+I have designed and written the logic myself, though I have used AI (Gemini) as a rubber duck and to find out about commands I haven't used before
 
 ## Prep
 
