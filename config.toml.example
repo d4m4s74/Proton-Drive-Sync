@@ -1,0 +1,7 @@
+local_dir = "${HOME}/backup"
+remote_dir = "/my-files/backup" #Always starts with /my-files/
+proton_drive_binary = "${SCRIPT_DIR}/proton-drive" 
+proton_drive_cache_dir = "${SCRIPT_DIR}/.cache" #optional, for default see https://github.com/ProtonDriveApps/sdk/blob/main/cli/README.md
+unsafe_login = false #Optional. Use if you don't have a credentials store. Defaults to false
+empty_trash = false # Optional. Empties the trash after sync completes. This includes files trashed outside of the script. Defaults to false
+# log_level = "info" #Optional. Options are "quiet", "info" and "debug". Defaults to "info" when running in the terminal and "quiet" when loaded by a script.

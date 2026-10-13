@@ -1,0 +1,4 @@
+proton-drive
+config.toml
+.cache/
+test_data/
