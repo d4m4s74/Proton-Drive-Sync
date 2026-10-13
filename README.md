@@ -34,6 +34,10 @@ empty_trash = false   # Set to true to automatically purge the remote trash fold
 ```
 *The configuration parser naturally interprets and resolves both `${HOME}` (user profile paths) and `${SCRIPT_DIR}` (the local directory hosting the script file) for local_dir, proton_drive_binary and proton_drive_cache_dir.*
 
+## Migrating from the old bash script
+
+The structure of the .proton_sync_state file from the old script is incompatible with the one from the new script. Delete it and do one full run. Proton Drive CLI will automatically disregard unmodified files after uploading. 
+
 ## Usage
 
 After installation always run the script manually at least once in order to log into Proton Drive:
