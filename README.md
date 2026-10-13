@@ -57,7 +57,7 @@ Open your crontab editor with:
 
 Then add a line like this:
 
-    0 2 * * * /usr/bin/python3 /path/to/your/project/proton_backup.py
+    0 2 * * * /usr/bin/python3 /path/to/your/project/proton_drive_sync.py
 
 This means:
 
@@ -73,7 +73,7 @@ So the script will run every night at 2:00 AM.
 
 If you want to save output to a log file, you can redirect stdout and stderr:
 
-    0 2 * * * /usr/bin/python3 /path/to/your/project/proton_backup.py >> /path/to/your/project/backup_runs.log 2>&1
+    0 2 * * * /usr/bin/python3 /path/to/your/project/proton_drive_sync.py >> /path/to/your/project/backup_runs.log 2>&1
 
 That means:
 
