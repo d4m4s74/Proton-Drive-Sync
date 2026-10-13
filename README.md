@@ -117,6 +117,51 @@ The script keeps a local state file here:
 
 This file lets the script detect what changed since the previous run.
 
+## Docker Installation
+
+It is also possible to run this script in a docker container. 
+
+Your backup directory is mounted as **Read-Only (`:ro`)**, so the statefile is stored outside of the backup. It will be synced to Proton Drive but won't be in the local folder
+
+### Configure via Docker Compose
+Create an empty directory on your server, open a file named `docker-compose.yml`, and paste the following setup:
+
+```yaml
+version: '3.8'
+
+services:
+  proton-sync:
+    image: d4m4s74/proton-drive-sync:latest
+    container_name: proton-sync
+    restart: unless-stopped
+    environment:
+      - INTERVAL_HOURS=24
+      # - START_HOUR=2          # Optional: Un-comment to align initial run (e.g., 2 AM)
+      - REMOTE_DIR=/my-files/backup  # Must always begin with /my-files/
+      - EMPTY_TRASH=false       # Optional: Set to true to automatically purge the remote trash folder post-sync
+    volumes:
+      # Map your host local backup source folder to the container's data workspace as Read-Only
+      - /path/to/your/local/backup:/data/backup:ro
+      # Map a local folder to persist your authentication and state file across updates
+      - ./cache:/app/.cache
+```
+
+Launch the container infrastructure:
+```bash
+docker compose up -d
+```
+
+### Interactive Authentication
+The first time using the script you have to log into proton drive. To do that use the following command and follow the instructions in the terminal
+```bash
+docker exec -it proton-sync ./proton-drive auth login
+```
+
+To see if the login and syncronisation were succesful you can check the logs by using the following command
+```bash
+docker logs -f proton-sync
+```
+
 ## Notes
 
 - The script is cautious about deletions and uses Proton Drive's trash mechanism
