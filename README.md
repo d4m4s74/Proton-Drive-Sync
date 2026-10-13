@@ -119,7 +119,8 @@ This file lets the script detect what changed since the previous run.
 
 ## Docker Installation
 
-It is also possible to run this script in a docker container. 
+It is also possible to run this script in a docker container.  
+Note: Currently only for linux/x64
 
 Your backup directory is mounted as **Read-Only (`:ro`)**, so the statefile is stored outside of the backup. It will be synced to Proton Drive but won't be in the local folder
 
