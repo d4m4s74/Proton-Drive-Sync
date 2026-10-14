@@ -129,8 +129,6 @@ Your backup directory is mounted as **Read-Only (`:ro`)**, so the statefile is s
 Create an empty directory on your server, open a file named `docker-compose.yml`, and paste the following setup:
 
 ```yaml
-version: '3.8'
-
 services:
   proton-sync:
     image: d4m4s74/proton-drive-sync:latest

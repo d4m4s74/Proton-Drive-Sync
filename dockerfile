@@ -1,15 +1,16 @@
-FROM python:3.12-slim
+# 1. Upgrade to the newest Python runtime branch
+FROM python:3.13-slim
 
-# 1. Establish the workspace and install curl to grab the binary during the build phase
+# Establish the workspace
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
+# 2. Combine apt actions, use curl, and immediately purge it in a single layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    && curl -fsSL -o proton-drive https://proton.me/download/drive/cli/0.9.0/linux-x64/proton-drive \ 
+    && chmod +x proton-drive \
+    && apt-get purge -y --auto-remove curl \
     && rm -rf /var/lib/apt/lists/*
-
-# 2. Pull the canonical Linux x64 binary directly from the Proton servers. replace with the correct file for your system
-RUN curl -fsSL -o proton-drive https://proton.me/download/drive/cli/0.9.0/linux-x64/proton-drive \ 
-    && chmod +x proton-drive
 
 # 3. Layer your custom synchronization script engines into the directory space
 COPY proton_drive_sync.py .
