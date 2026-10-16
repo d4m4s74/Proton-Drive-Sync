@@ -18,6 +18,8 @@ The docker_runner.py script was generated as a quick addition for ease of deploy
 
 ## Prep
 
+Download the correct version Proton Drive CLI from https://proton.me/download/drive/cli/index.html and save it somewhere you can find it. For example in the same directory as proton_drive_sync.py script.
+
 This script uses a config file. Copy the example file and modify its contents:
 ```bash
 cp config.toml.example config.toml
