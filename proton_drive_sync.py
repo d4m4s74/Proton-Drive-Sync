@@ -228,6 +228,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                 upload.remove(f"d::{name}")
                 basename = os.path.basename(name)
                 conflict_filename = f"{basename}_{START_TIME}"
+                shutil.move(name, os.path.join(CONFLICT_DIR,conflict_filename))
                 logging.warning(f"Conflict local file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
 
     elif RESOLVE_STRATEGY == "local":
