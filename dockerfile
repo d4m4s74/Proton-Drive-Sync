@@ -25,7 +25,7 @@ COPY proton_drive_sync.py .
 COPY docker_runner.py .
 
 # 4. Initialize structural mount points
-RUN mkdir -p /app/.cache
+RUN mkdir -p /app/.cache && chmod -R 777 /app
 
 # --- MANDATORY EMBEDDED ENGINE DEFAULTS ---
 ENV AM_I_DOCKER="true"

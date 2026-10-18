@@ -5,3 +5,5 @@ proton_drive_cache_dir = "${SCRIPT_DIR}/.cache" #optional, for default see https
 unsafe_login = false #Optional. Use if you don't have a credentials store. Defaults to false
 empty_trash = false # Optional. Empties the trash after sync completes. This includes files trashed outside of the script. Defaults to false
 # log_level = "info" #Optional. Options are "quiet", "info" and "debug". Defaults to "info" when running in the terminal and "quiet" when loaded by a script.
+two_way = false #optional. Setting to true enables 2 way sync between the local and remote directory
+# resolve_strategy = "newest" #Optional. Options are "newest", "local" and "remote". Defaults to "newest". losers are stored in ${REMOTE_DIR}/conflict

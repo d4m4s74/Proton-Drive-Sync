@@ -9,6 +9,9 @@ This application synchronizes a local backup folder to Proton Drive.
 - Trashes remote files and folders that were deleted locally
 - Preserves folder structure
 - Keeps a local state file so unchanged items are skipped on later runs
+### With two way sync enabled
+- Downloads new and modified files from the folder on Proton Drive
+- Deletes files from the local folder when deleted from Proton Drive
 
 ## About this project
 
@@ -16,9 +19,13 @@ This is a full manual rewrite of my original vibe coded Proton Drive Sync script
 I have designed and written the logic myself, though I have used AI (Gemini) as a rubber duck and to find out about commands I haven't used before  
 The docker_runner.py script was generated as a quick addition for ease of deployment with only a few small manual changes to reduce complexity
 
+## Requirements
+Python 3.12 or later
+Proton Drive CLI
+
 ## Prep
 
-Download the correct version Proton Drive CLI from https://proton.me/download/drive/cli/index.html and save it somewhere you can find it. For example in the same directory as proton_drive_sync.py script.
+Download the appropriate version Proton Drive CLI from https://proton.me/download/drive/cli/index.html and save it somewhere you can find it. For example in the same directory as proton_drive_sync.py script.
 
 This script uses a config file. Copy the example file and modify its contents:
 ```bash
@@ -30,10 +37,13 @@ remote_dir = "/my-files/backup"  # Must always begin with /my-files/
 proton_drive_binary = "${SCRIPT_DIR}/proton-drive" 
 proton_drive_cache_dir = "${SCRIPT_DIR}/.cache"  # Optional path override
 
-unsafe_login = false  # Set to true if headless/no keyring present
-empty_trash = false   # Set to true to automatically purge the remote trash folder post-sync
+unsafe_login = false        # Set to true if headless/no keyring present
+empty_trash = false         # Set to true to automatically purge the remote trash folder post-sync
 
-# log_level = "info"  # Optional: "quiet", "info", or "debug"
+two_way = false             # Set to true to enable two-way sync
+resolve_strategy = "newest" # Optional. Options are "newest", "local" and "remote". Defaults to "newest". losers are stored in ${REMOTE_DIR}/conflict
+
+# log_level = "info"        # Optional: "quiet", "info", or "debug"
 ```
 *The configuration parser naturally interprets and resolves both `${HOME}` (user profile paths) and `${SCRIPT_DIR}` (the local directory hosting the script file) for local_dir, proton_drive_binary and proton_drive_cache_dir.*
 
@@ -65,6 +75,18 @@ chmod +x before_run.sh
 ```
 *Note: If the `before_run.sh` script exits with an error status code (anything other than `0`), the master Python engine will automatically abort the synchronization process to protect your remote cloud backups from corruption.*
 
+## Two-Way Sync
+With Two-Way sync enabled files added to your remote folder manually or by a second instance are automatically downloaded to your local folder.  
+Modifications and deletions are also synchronised to your local folder.
+
+### Conflicts
+When a file is modified both on your local device and remote folder the "losing" file is tagged with the date and time and moved to the conflicts folder.  
+There are three types of conflict resolution:
+
+Newest: The file with the most recent modification time is saved in its original location. The older file is moved.  
+Local:  The file uploaded by the script is always saved in its original location. The existing file is moved.  
+Remote: The file already in the remote folder is kept at its original location. The new file is moved.
+
 
 ## Migrating from the old bash script
 
@@ -74,7 +96,7 @@ The structure of the .proton_sync_state file from the old script is incompatible
 
 After installation always run the script manually at least once in order to log into Proton Drive:
 ```bash
-python3 proton_backup.py
+python3 proton_drive_sync.py
 ```
 
 ### Running it automatically with cron
@@ -138,15 +160,27 @@ services:
     restart: unless-stopped
     environment:
       - INTERVAL_HOURS=24
-      # - START_HOUR=2          # Optional: Un-comment to align initial run (e.g., 2 AM)
-      - REMOTE_DIR=/my-files/backup  # Must always begin with /my-files/
-      - EMPTY_TRASH=false       # Optional: Set to true to automatically purge the remote trash folder post-sync
+      # - START_HOUR=2              # Optional: Un-comment to align initial run (e.g., 2 AM)
+      - REMOTE_DIR=/my-files/backup # Must always begin with /my-files/
+      - EMPTY_TRASH=false           # Optional: Set to true to automatically purge the remote trash folder post-sync
+      - TWO_WAY=false               # Optional: Enables two-way sync
+      - RESOLVE_STRATEGY=newest     # Optional. Options are newest, "local" and remote. Defaults to newest. Losers are stored in ${REMOTE_DIR}/conflict
+      - USER=1000                   # Optional: Set user and group to your user so downloaded files aren't owned by root.
+      - GROUP=1000                  # Optional: Set user and group to your user so downloaded files aren't owned by root.
     volumes:
-      # Map your host local backup source folder to the container's data workspace as Read-Only
-      - /path/to/your/local/backup:/data/backup:ro
+      # Map your host local source folder to the container's data workspace
+      # For One-Way Sync / Backup Mode (Read-Only)
+      - /path/to/local/backup:/data/backup:ro
+      # For Two-Way Sync Mode (Read-Write)
+      # - /path/to/local/backup:/data/backup
+      
       # Map a local folder to persist your authentication and state file across updates
       - ./proton_sync:/app/.cache
+      
+      # Optional: Map a pre-backup hook
+      # - ./before_run.sh:/app/before_run.sh
 ```
+Modify the file for your local setup.
 
 Launch the container infrastructure:
 ```bash
@@ -159,7 +193,7 @@ The first time using the script you have to log into proton drive. To do that us
 docker exec -it proton-sync ./proton-drive auth login
 ```
 
-To see if the login and syncronisation were succesful you can check the logs by using the following command
+To see if the login and synchronization were succesful you can check the logs by using the following command
 ```bash
 docker logs -f proton-sync
 ```
