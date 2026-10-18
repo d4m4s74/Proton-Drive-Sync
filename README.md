@@ -144,8 +144,9 @@ This file lets the script detect what changed since the previous run.
 
 ## Docker Installation
 
-It is also possible to run this script in a docker container.  
-Note: Currently only tested for linux/x64, but it should also work on linux/arm64
+It is also possible to run this script in a docker container  
+The Docker Hub image is compatible with linux/x64 and linux/arm64  
+The arm64 version was tested on a Raspberry Pi 3 Model B.
 
 By default your local folder is mounted as **Read-Only (`:ro`)**, so the statefile is stored outside of the folder. It will be synced to Proton Drive but won't be in the local folder  
 If you enable two-way sync the local folder is mounted as **Read-Write**, but the statefile is still kept outside of the folder so you can always revert to one-way
