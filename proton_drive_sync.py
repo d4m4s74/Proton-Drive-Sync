@@ -773,7 +773,7 @@ if TWO_WAY:
 # Save and upload the state file. This also works as a keepalive
 logging.info(f"Saving metadata in {STATE_FILE}")
 with open(STATE_FILE, "w", encoding="utf-8") as f:
-    f.write(f"i::{LOCAL_DIR}\n")
+    f.write(f"i::{fix_remote_path(LOCAL_DIR)}\n")
     f.write("\n".join(meta))
 
 result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', STATE_FILE, REMOTE_DIR, '-j'])
