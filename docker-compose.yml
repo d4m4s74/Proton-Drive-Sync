@@ -9,9 +9,10 @@ services:
       - REMOTE_DIR=/my-files/backup # Must always begin with /my-files/
       - EMPTY_TRASH=false           # Optional: Set to true to automatically purge the remote trash folder post-sync
       - TWO_WAY=false               # Optional: Enables two-way sync
-      - RESOLVE_STRATEGY=newest     # Optional. Options are newest, "local" and remote. Defaults to newest. Losers are stored in ${REMOTE_DIR}/conflict
+      - RESOLVE_STRATEGY=newest     # Optional. Options are newest, local and remote. Defaults to newest. Losers are stored in ${REMOTE_DIR}/conflict
       - USER=1000                   # Optional: Set user and group to your user so downloaded files aren't owned by root.
       - GROUP=1000                  # Optional: Set user and group to your user so downloaded files aren't owned by root.
+      - LOG_LEVEL=quiet             # Optional: Options are quiet, info and debug. Defaults to quiet
     volumes:
       # Map your host local source folder to the container's data workspace
       # For One-Way Sync / Backup Mode (Read-Only)

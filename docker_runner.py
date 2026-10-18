@@ -48,6 +48,7 @@ EMPTY_TRASH_ENV = os.environ.get("EMPTY_TRASH", "false").lower()
 TWO_WAY_ENV = os.environ.get("TWO_WAY", "false").lower()
 TWO_WAY_TOML = "true" if TWO_WAY_ENV in ["true", "1", "yes"] else "false"
 RESOLVE_STRATEGY = os.environ.get("RESOLVE_STRATEGY", "newest").strip('"\'').lower()
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "quiet").strip('"\'').lower()
 USER = int(os.environ.get("USER",1000))
 GROUP = int(os.environ.get("GROUP",1000))
 
@@ -66,7 +67,7 @@ proton_drive_binary = "./proton-drive"
 proton_drive_cache_dir = "./.cache"
 unsafe_login = true
 empty_trash = {EMPTY_TRASH_TOML}
-log_level = "quiet"
+log_level = "{LOG_LEVEL}"
 two_way = {TWO_WAY_TOML}
 resolve_strategy = "{RESOLVE_STRATEGY}"
 """
