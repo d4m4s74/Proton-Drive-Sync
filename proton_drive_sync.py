@@ -372,7 +372,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     old_remote_path = local_path_to_remote(name)
                     result = run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
                     logging.debug(f"File/folder upload CLI execution results: {result}")
-                    result = run_proton_cli(['filesystem', 'rename', os.path.join(fix_remote_path(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
+                    result = run_proton_cli(['filesystem', 'rename', fix_remote_path(os.path.join(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
                     logging.debug(f"File/folder rename CLI execution results: {result}")
                     download.add(f"d::{os.path.join(CONFLICT_DIR,conflict_filename)}")
                     logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
@@ -776,7 +776,7 @@ with open(STATE_FILE, "w", encoding="utf-8") as f:
     f.write(f"i::{fix_remote_path(LOCAL_DIR)}\n")
     f.write("\n".join(meta))
 
-result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', STATE_FILE, REMOTE_DIR, '-j'])
+result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', fix_local_path(STATE_FILE), fix_remote_path(REMOTE_DIR), '-j'])
 logging.debug(f"State file upload CLI execution results: {result}")
 
 trash_emptied = False
