@@ -59,6 +59,12 @@ EMPTY_TRASH_TOML = "true" if EMPTY_TRASH_ENV in ["true", "1", "yes"] else "false
 # This guarantees write privileges even if external volume mounts alter the tree layout
 os.makedirs("/app/.cache", exist_ok=True)
 recursive_chown("/app/.cache", uid=USER, gid=GROUP)
+stat_info = os.stat("/data/backup")
+if TWO_WAY_ENV == "true" and stat_info.st_uid != USER:
+    try:
+        os.chown("/data/backup", USER, GROUP)
+    except:
+        logging.warning(f"Local directory not owned by user {USER}. Two-Way sync not possible")
 
 # 2. FIXED: Point 'proton_drive_binary' directly to the local executable file context
 CONFIG_TEMPLATE = f"""local_dir = "/data/backup"

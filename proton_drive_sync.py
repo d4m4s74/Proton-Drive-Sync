@@ -19,6 +19,18 @@ class ProtonCliError(Exception):
         self.stderr = stderr
         super().__init__(f"Command '{' '.join(cmd)}' failed:\n{stderr}")
 
+IS_WINDOWS = os.name == 'nt'
+def fix_local_path(path):
+    if IS_WINDOWS:
+        return str(path).replace('/','\\')
+    else:
+        return str(path).replace('\\','/')
+            
+def fix_remote_path(path):
+    return str(path).replace('\\','/')
+    
+    
+
 def is_path_readonly(path: str) -> bool:
     """Check if a given directory path is read-only by attempting a temporary write test."""
     abs_path = os.path.abspath(path)
@@ -27,7 +39,7 @@ def is_path_readonly(path: str) -> bool:
         
     test_file_path = os.path.join(abs_path, ".sync_write_test")
     try:
-        with open(test_file_path, "w") as f:
+        with open(fix_local_path(test_file_path), "w") as f:
             f.write("test")
         os.remove(test_file_path)
         return False  # Writable
@@ -45,10 +57,10 @@ def run_proton_cli(args, fail=True):
     return result 
 
 def local_path_to_remote(path):
-    return os.path.join(REMOTE_DIR,os.path.relpath(path, LOCAL_DIR))
+    return fix_remote_path(os.path.join(REMOTE_DIR,os.path.relpath(path, LOCAL_DIR)))
 
 def remote_path_to_local(path):
-    os.path.join(LOCAL_DIR,os.path.relpath(path, REMOTE_DIR))
+    return fix_local_path(os.path.join(LOCAL_DIR,os.path.relpath(path, REMOTE_DIR)))
 
 #local walk
 def local_walk():
@@ -60,20 +72,20 @@ def local_walk():
                 continue  # Skip tracking the state file itself!
             path = os.path.join(root,name)
             filenames.add(path)
-            meta.add(f"f::{path}::{int(os.path.getmtime(path))}::{os.path.getsize(path)}")
+            meta.add(f"f::{fix_remote_path(path)}::{int(os.path.getmtime(path))}::{os.path.getsize(path)}")
         for name in dirs:
             path = os.path.join(root,name)
             if path == CONFLICT_DIR:
                 continue #skip tracking conflict dir itself
             filenames.add(path)
-            meta.add(f"d::{path}")
+            meta.add(f"d::{fix_remote_path(path)}")
     return meta, filenames
 
 #remote crawl
 def remote_crawl(path=""):
-    logging.debug(f"Crawling remote folder {os.path.join(REMOTE_DIR,path)}")
+    logging.debug(f"Crawling remote folder {fix_remote_path(os.path.join(REMOTE_DIR,path))}")
     meta = set()
-    result = run_proton_cli(['filesystem', 'list', os.path.join(REMOTE_DIR,path), '-j'])
+    result = run_proton_cli(['filesystem', 'list', fix_remote_path(os.path.join(REMOTE_DIR,path)), '-j'])
     logging.debug(f"Remote crawl CLI execution results: {result}")
     items = json.loads(result.stdout)
     for item in items:
@@ -87,15 +99,15 @@ def remote_crawl(path=""):
             itemstring += "d"
         else:
             itemstring += "f"
-        itemstring += f"::{os.path.join(LOCAL_DIR,path,filename)}"
+        itemstring += f"::{fix_remote_path(os.path.join(LOCAL_DIR,path,filename))}"
         if not folder:
             dt = datetime.fromisoformat(item['activeRevision']['claimedModificationTime'].replace("Z", "+00:00"))
             epoch_int = int(dt.timestamp())
             itemstring += f"::{epoch_int}::{item['activeRevision']['claimedSize']}"
-        if os.path.join(LOCAL_DIR,path,filename) != CONFLICT_DIR: #skip adding conflict dir because times never match
+        if fix_local_path(os.path.join(LOCAL_DIR,path,filename)) != CONFLICT_DIR: #skip adding conflict dir because times never match
             meta.add(itemstring)
         if folder:
-            meta.update(remote_crawl(os.path.join(path,filename)))
+            meta.update(remote_crawl(fix_remote_path(os.path.join(path,filename))))
     return meta
 
 def calculate_remote_changes(meta, filenames, old_meta): #Calculates things to change on the remote server
@@ -220,16 +232,16 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                 basename = os.path.basename(name)
                 filename, ext = os.path.splitext(basename)
                 conflict_filename = f"{filename}_{START_TIME}{ext}"
-                shutil.move(name, os.path.join(CONFLICT_DIR,conflict_filename))
-                logging.warning(f"Conflict local file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                shutil.move(fix_local_path(name), fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename)))
+                logging.warning(f"Conflict local file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
             if name in upload_folders:
                 num_conflicts += 1
-                logging.warning(f"Conflict local folder {name} moved")
+                logging.warning(f"Conflict local folder {fix_local_path(name)} moved")
                 upload.remove(f"d::{name}")
                 basename = os.path.basename(name)
                 conflict_filename = f"{basename}_{START_TIME}"
-                shutil.move(name, os.path.join(CONFLICT_DIR,conflict_filename))
-                logging.warning(f"Conflict local file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                shutil.move(fix_local_path(name), fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename)))
+                logging.warning(f"Conflict local file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
 
     elif RESOLVE_STRATEGY == "local":
         for name in {**upload_files}.keys() | upload_folders:
@@ -242,24 +254,24 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                 filename, ext = os.path.splitext(basename)
                 conflict_filename = f"{filename}_{START_TIME}{ext}"
                 old_remote_path = local_path_to_remote(name)
-                result = run_proton_cli(['filesystem', 'move', old_remote_path, CONFLICT_DIR_REMOTE, '-j'])
+                result = run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
                 logging.debug(f"File/folder move CLI execution results: {result}")
-                result = run_proton_cli(['filesystem', 'rename', os.path.join(CONFLICT_DIR_REMOTE,basename), conflict_filename, '-j'])
+                result = run_proton_cli(['filesystem', 'rename', fix_remote_path(os.path.join(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
                 logging.debug(f"File/folder rename CLI execution results: {result}")
-                download.add(f"f::{os.path.join(CONFLICT_DIR,conflict_filename)}::{mtime}::{size}")
-                logging.warning(f"Conflict remote file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                download.add(f"f::{fix_remote_path(os.path.join(CONFLICT_DIR,conflict_filename))}::{mtime}::{size}")
+                logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
             if name in download_folders:
                 num_conflicts += 1
                 download.remove(f"d::{name}")
                 basename = os.path.basename(name)
                 conflict_filename = f"{basename}_{START_TIME}"
                 old_remote_path = local_path_to_remote(name)
-                result = run_proton_cli(['filesystem', 'move', old_remote_path, CONFLICT_DIR_REMOTE, '-j'])
+                result = run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
                 logging.debug(f"File/folder upload CLI execution results: {result}")
-                result = run_proton_cli(['filesystem', 'rename', os.path.join(CONFLICT_DIR_REMOTE,basename), conflict_filename, '-j'])
+                result = run_proton_cli(['filesystem', 'rename', fix_remote_path(os.path.join(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
                 logging.debug(f"File/folder rename CLI execution results: {result}")
-                download.add(f"d::{os.path.join(CONFLICT_DIR,conflict_filename)}")
-                logging.warning(f"Conflict remote file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                download.add(f"d::{fix_remote_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
+                logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
     else:
         for name in upload_files:
             if name in download_files:
@@ -273,12 +285,12 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     filename, ext = os.path.splitext(basename)
                     conflict_filename = f"{filename}_{START_TIME}{ext}"
                     old_remote_path = local_path_to_remote(name)
-                    result = run_proton_cli(['filesystem', 'move', old_remote_path, CONFLICT_DIR_REMOTE, '-j'])
+                    result = run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
                     logging.debug(f"File/folder move CLI execution results: {result}")
-                    result = run_proton_cli(['filesystem', 'rename', os.path.join(CONFLICT_DIR_REMOTE,basename), conflict_filename, '-j'])
+                    result = run_proton_cli(['filesystem', 'rename', fix_remote_path(os.path.join(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
                     logging.debug(f"File/folder rename CLI execution results: {result}")
-                    download.add(f"f::{os.path.join(CONFLICT_DIR,conflict_filename)}::{mtime}::{size}")
-                    logging.warning(f"Conflict remote file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    download.add(f"f::{fix_remote_path(os.path.join(CONFLICT_DIR,conflict_filename))}::{mtime}::{size}")
+                    logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
                 else:
                     num_conflicts += 1
                     #remote file is newer
@@ -286,10 +298,10 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     basename = os.path.basename(name)
                     filename, ext = os.path.splitext(basename)
                     conflict_filename = f"{filename}_{START_TIME}{ext}"
-                    shutil.move(name, os.path.join(CONFLICT_DIR,conflict_filename))
-                    logging.warning(f"Conflict local file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    shutil.move(fix_local_path(name), fix_remote_path(os.path.join(CONFLICT_DIR,conflict_filename)))
+                    logging.warning(f"Conflict local file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
             if name in download_folders:
-                result = run_proton_cli(['filesystem', 'info', local_path_to_remote(name), '-j'])
+                result = run_proton_cli(['filesystem', 'info', fix_remote_path(local_path_to_remote(name)), '-j'])
                 item = json.loads(result.stdout)
                 # Use top-level 'modificationTime' for folders
                 dt = datetime.fromisoformat(item['modificationTime'].replace("Z", "+00:00"))
@@ -301,12 +313,12 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     basename = os.path.basename(name)
                     conflict_filename = f"{basename}_{START_TIME}"
                     old_remote_path = local_path_to_remote(name)
-                    result = run_proton_cli(['filesystem', 'move', old_remote_path, CONFLICT_DIR_REMOTE, '-j'])
+                    result = run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
                     logging.debug(f"File/folder upload CLI execution results: {result}")
-                    result = run_proton_cli(['filesystem', 'rename', os.path.join(CONFLICT_DIR_REMOTE,basename), conflict_filename, '-j'])
+                    result = run_proton_cli(['filesystem', 'rename', fix_remote_path(os.path.join(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
                     logging.debug(f"File/folder rename CLI execution results: {result}")
-                    download.add(f"d::{os.path.join(CONFLICT_DIR,conflict_filename)}")
-                    logging.warning(f"Conflict remote file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    download.add(f"d::{fix_remote_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
+                    logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
                 else:
                     #remote folder is newer
                     num_conflicts += 1
@@ -314,11 +326,11 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     basename = os.path.basename(name)
                     filename, ext = os.path.splitext(basename)
                     conflict_filename = f"{filename}_{START_TIME}{ext}"
-                    shutil.move(name, os.path.join(CONFLICT_DIR,conflict_filename))
-                    logging.warning(f"Conflict local file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    shutil.move(fix_local_path(name), fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename)))
+                    logging.warning(f"Conflict local file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
         for name in upload_folders:
             if name in download_files:
-                local_folder_mtime = int(os.path.getmtime(name))
+                local_folder_mtime = int(os.path.getmtime(fix_local_path(name)))
                 if local_folder_mtime > download_files[name][0]:
                     #local folder is newer
                     num_conflicts += 1
@@ -329,23 +341,23 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     filename, ext = os.path.splitext(basename)
                     conflict_filename = f"{filename}_{START_TIME}{ext}"
                     old_remote_path = local_path_to_remote(name)
-                    result = run_proton_cli(['filesystem', 'move', old_remote_path, CONFLICT_DIR_REMOTE, '-j'])
+                    result = run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
                     logging.debug(f"File/folder move CLI execution results: {result}")
-                    result = run_proton_cli(['filesystem', 'rename', os.path.join(CONFLICT_DIR_REMOTE,basename), conflict_filename, '-j'])
+                    result = run_proton_cli(['filesystem', 'rename', os.path.join(fix_remote_path(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
                     logging.debug(f"File/folder rename CLI execution results: {result}")
                     download.add(f"f::{os.path.join(CONFLICT_DIR,conflict_filename)}::{mtime}::{size}")
-                    logging.warning(f"Conflict remote file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
                 else:
                     #remote file is newer:
                     num_conflicts += 1
                     upload.remove(f"d::{name}")
                     basename = os.path.basename(name)
                     conflict_filename = f"{basename}_{START_TIME}"
-                    shutil.move(name, os.path.join(CONFLICT_DIR,conflict_filename))
-                    logging.warning(f"Conflict remote file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    shutil.move(fix_local_path(name), fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename)))
+                    logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
             if name in download_folders:
-                local_folder_mtime = int(os.path.getmtime(name))
-                result = run_proton_cli(['filesystem', 'info', local_path_to_remote(name), '-j'])
+                local_folder_mtime = int(os.path.getmtime(fix_local_path(name)))
+                result = run_proton_cli(['filesystem', 'info', fix_remote_path(local_path_to_remote(name)), '-j'])
                 item = json.loads(result.stdout)
                 # Use top-level 'modificationTime' for folders
                 dt = datetime.fromisoformat(item['modificationTime'].replace("Z", "+00:00"))
@@ -357,12 +369,12 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     basename = os.path.basename(name)
                     conflict_filename = f"{basename}_{START_TIME}"
                     old_remote_path = local_path_to_remote(name)
-                    result = run_proton_cli(['filesystem', 'move', old_remote_path, CONFLICT_DIR_REMOTE, '-j'])
+                    result = run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
                     logging.debug(f"File/folder upload CLI execution results: {result}")
-                    result = run_proton_cli(['filesystem', 'rename', os.path.join(CONFLICT_DIR_REMOTE,basename), conflict_filename, '-j'])
+                    result = run_proton_cli(['filesystem', 'rename', os.path.join(fix_remote_path(CONFLICT_DIR_REMOTE,basename)), conflict_filename, '-j'])
                     logging.debug(f"File/folder rename CLI execution results: {result}")
                     download.add(f"d::{os.path.join(CONFLICT_DIR,conflict_filename)}")
-                    logging.warning(f"Conflict remote file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    logging.warning(f"Conflict remote file or folder {fix_local_path(name)} moved to {fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename))}")
                 else:
                     #remote folder is newer
                     num_conflicts += 1
@@ -370,20 +382,20 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                     basename = os.path.basename(name)
                     filename, ext = os.path.splitext(basename)
                     conflict_filename = f"{filename}_{START_TIME}{ext}"
-                    shutil.move(name, os.path.join(CONFLICT_DIR,conflict_filename))
-                    logging.warning(f"Conflict local file or folder {name} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
+                    shutil.move(fix_local_path(name), fix_local_path(os.path.join(CONFLICT_DIR,conflict_filename)))
+                    logging.warning(f"Conflict local file or folder {fix_local_path(name)} moved to {os.path.join(CONFLICT_DIR,conflict_filename)}")
 
     if RESOLVE_STRATEGY in ("local", "newest") and num_conflicts > 0:
         #Note in the end upload (merge) conflict folder separately
-        result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', CONFLICT_DIR, REMOTE_DIR, '-j', "--skip-thumbnails"])
+        result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', fix_local_path(CONFLICT_DIR), fix_remote_path(REMOTE_DIR), '-j', "--skip-thumbnails"])
         logging.debug(f"File/folder upload CLI execution results: {result}")
     return num_conflicts
 
 
 
-SCRIPT_DIR = str(pathlib.Path(__file__).parent.resolve())
-CONFIG_PATH = os.path.join(SCRIPT_DIR,"config.toml")
-HOME_DIR = os.environ.get("HOME", os.path.expanduser("~"))
+SCRIPT_DIR = fix_local_path(str(pathlib.Path(__file__).parent.resolve()))
+CONFIG_PATH = fix_local_path(os.path.join(SCRIPT_DIR,"config.toml"))
+HOME_DIR = fix_local_path(os.environ.get("HOME", os.path.expanduser("~")))
 
 try:
     with open(str(CONFIG_PATH), "rb") as f:
@@ -426,26 +438,26 @@ logging.basicConfig(
     handlers=log_handlers
 )
 
-LOCAL_DIR = config['local_dir'].replace("${SCRIPT_DIR}", SCRIPT_DIR).replace("${HOME}", HOME_DIR)
-PROTON_DRIVE_BINARY = config['proton_drive_binary'].replace("${SCRIPT_DIR}", SCRIPT_DIR).replace("${HOME}", HOME_DIR)
-REMOTE_DIR = config['remote_dir']
+LOCAL_DIR = fix_local_path(config['local_dir'].replace("${SCRIPT_DIR}", SCRIPT_DIR).replace("${HOME}", HOME_DIR))
+PROTON_DRIVE_BINARY = fix_local_path(config['proton_drive_binary'].replace("${SCRIPT_DIR}", SCRIPT_DIR).replace("${HOME}", HOME_DIR))
+REMOTE_DIR = fix_remote_path(config['remote_dir'])
 if 'proton_drive_cache_dir' in config:
-    os.environ["PROTON_DRIVE_CACHE_DIR"] = config['proton_drive_cache_dir'].replace("${SCRIPT_DIR}",SCRIPT_DIR)
+    os.environ["PROTON_DRIVE_CACHE_DIR"] = fix_local_path(config['proton_drive_cache_dir'].replace("${SCRIPT_DIR}",SCRIPT_DIR))
 if 'unsafe_login' in config and config['unsafe_login'] == True:
     os.environ['PROTON_DRIVE_CREDENTIALS_STORE'] = "unsafe_file"
 STATE_FILE_NAME = ".proton_sync_state"
-CONFLICT_DIR = os.path.join(LOCAL_DIR,"conflicts")
-CONFLICT_DIR_REMOTE = os.path.join(REMOTE_DIR,"conflicts")
+CONFLICT_DIR = fix_local_path(os.path.join(LOCAL_DIR,"conflicts"))
+CONFLICT_DIR_REMOTE = fix_remote_path(os.path.join(REMOTE_DIR,"conflicts"))
 TWO_WAY = config.get('two_way', False)
 if TWO_WAY and is_path_readonly(LOCAL_DIR):
-    logging.error(f"    {LOCAL_DIR} mounted as read-only. Two-way sync forcibly disabled.")
-    TWO_WAY = False
+    logging.error(f"{LOCAL_DIR} mounted as read-only. Unable to run Two-Way sync. Exited to protect remote files.")
+    sys.exit(1)
 
 # Check for the explicit Docker image environment flag
 if os.environ.get("AM_I_DOCKER") == "true":
     STATE_FILE = os.path.join("./.cache", STATE_FILE_NAME) # Locked to persistent container volume
 else:
-    STATE_FILE = os.path.join(LOCAL_DIR, STATE_FILE_NAME)  # Clean native host filesystem fallback
+    STATE_FILE = fix_local_path(os.path.join(LOCAL_DIR, STATE_FILE_NAME))  # Clean native host filesystem fallback
 
 EMPTY_TRASH = config.get('empty_trash', False)
 
@@ -475,8 +487,8 @@ elif result.stderr.strip():
 
 # Lock check and locking to prevent two devices syncing at the same time.
 logging.info("Locking remote folder")
-REMOTE_LOCK_FILE = os.path.join(REMOTE_DIR, ".proton_sync.lock")
-local_lock_temp = os.path.join(SCRIPT_DIR, ".proton_sync.lock")
+REMOTE_LOCK_FILE = fix_remote_path(os.path.join(REMOTE_DIR, ".proton_sync.lock"))
+local_lock_temp = fix_local_path(os.path.join(SCRIPT_DIR, ".proton_sync.lock"))
 
 # Maximum time to wait for the other device to finish (e.g., 5 minutes)
 MAX_WAIT_SECONDS = 300
@@ -540,7 +552,7 @@ atexit.register(cleanup_remote_lock)
 
 
 # Run hook script before running bakup
-BEFORE_RUN_SCRIPT = os.path.join(SCRIPT_DIR, "before_run.sh")
+BEFORE_RUN_SCRIPT = fix_local_path(os.path.join(SCRIPT_DIR, "before_run.sh"))
 
 # Check if the file exists
 if os.path.exists(BEFORE_RUN_SCRIPT):
@@ -580,7 +592,7 @@ if os.path.exists(STATE_FILE):
 else:
     FIRST_RUN = True
     logging.info("No state file found. Attempt to download remote state file")
-    result = run_proton_cli(['filesystem', 'download', os.path.join(REMOTE_DIR,STATE_FILE_NAME), os.path.dirname(STATE_FILE)], False)
+    result = run_proton_cli(['filesystem', 'download', fix_remote_path(os.path.join(REMOTE_DIR,STATE_FILE_NAME)), fix_local_path(os.path.dirname(STATE_FILE))], False)
     if os.path.exists(STATE_FILE):
         logging.info("Remote state file found")
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -623,7 +635,7 @@ if result.stderr.strip():
             create = True
         if create:
             logging.info(f"Creating new folder {d} in {path}")
-            subresult = run_proton_cli(['filesystem', 'create-folder', path, d, '-j'])
+            subresult = run_proton_cli(['filesystem', 'create-folder', fix_remote_path(path), d, '-j'])
             logging.debug(f"Folder creation CLI execution results: {subresult}")
         path = os.path.join(path, d)
 
@@ -634,12 +646,12 @@ upload, uploaded, remote_replaced, remote_delete, remote_deleted = calculate_rem
 remote_meta = set()
 if TWO_WAY:
     #preparation. Check if CONFLICT_DIR exists
-    result = run_proton_cli(['filesystem', 'info', CONFLICT_DIR_REMOTE, '-j'],False)
+    result = run_proton_cli(['filesystem', 'info', fix_remote_path(CONFLICT_DIR_REMOTE), '-j'],False)
     logging.debug(f"CONFLICT_DIR existence check CLI execution results: {result}")
     if result.stderr.strip():
         parent_path = os.path.dirname(CONFLICT_DIR_REMOTE)
         folder_name = os.path.basename(CONFLICT_DIR_REMOTE)
-        subresult = run_proton_cli(['filesystem', 'create-folder', parent_path, folder_name, '-j'])
+        subresult = run_proton_cli(['filesystem', 'create-folder', fix_remote_path(parent_path), folder_name, '-j'])
         logging.debug(f"Folder creation CLI execution results: {subresult}")
     logging.info(f"Starting crawl of {REMOTE_DIR}")
     start_crawl = time.perf_counter()
@@ -658,13 +670,16 @@ else:
 
 # Delete local files
 for file in local_delete:
-    target = pathlib.Path(file.split("::")[1])
+    target = pathlib.Path(fix_local_path(file.split("::")[1]))
     if target.is_dir():
         shutil.rmtree(target)  # Deletes folder and all its contents
         logging.info(f"Deleted local dir {target}")
     elif target.is_file():
         target.unlink()         # Deletes a single file
         logging.info(f"Deleted local file {target}")
+    else:
+        print("should_be_unreachable")
+        print(target, target.is_dir(), target.is_file())
 
 # Delete remote files
 for file in remote_delete:
@@ -681,7 +696,7 @@ for file in upload:
     server_path = local_path_to_remote(path)
     target_folder = os.path.split(server_path)[0]
     logging.info(f"Uploading {path} to {target_folder}")
-    result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', path, target_folder, '-j', "--skip-thumbnails"])
+    result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', fix_local_path(path), target_folder, '-j', "--skip-thumbnails"])
     logging.debug(f"File/folder upload CLI execution results: {result}")
 
 # Downloading new files
@@ -691,7 +706,7 @@ for file in download:
     server_path = local_path_to_remote(path)
     target_folder = os.path.split(path)[0]
     logging.info(f"Downloading {server_path} to {target_folder}")
-    result = run_proton_cli(['filesystem', 'download', '-f', 'remove', '-d', 'merge', server_path, target_folder, "-j"])
+    result = run_proton_cli(['filesystem', 'download', '-f', 'remove', '-d', 'merge', server_path, fix_local_path(target_folder), "-j"])
     logging.debug(f"File/folder download CLI execution results: {result}")
 
 #Restore mtimes for downloaded files
@@ -701,7 +716,7 @@ for file in all_downloads:
     if parts[0] == 'f':
         path = parts[1]
         mtime = float(parts[2])
-        local_file_path = os.path.join(LOCAL_DIR, path)
+        local_file_path = fix_local_path(os.path.join(LOCAL_DIR, path))
         
         if os.path.exists(local_file_path):
             try:
@@ -746,7 +761,7 @@ if EMPTY_TRASH:
 timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
 if TWO_WAY:
     print(
-        f"{timestamp} [STATUS] Synced: {uploaded} uploaded, {downloaded} downloaded, {remote_replaced} replaced in remote folder, {local_replaced} replaced in local folder, {remote_deleted} deleted from remote folder, {local_deleted} deleted from folder, {num_conflicts} conflicts{', trash emptied' if trash_emptied else ''}."
+        f"{timestamp} [STATUS] Synced: {uploaded} uploaded, {downloaded} downloaded, {remote_replaced} replaced in remote folder, {local_replaced} replaced in local folder, {remote_deleted} deleted from remote folder, {local_deleted} deleted from local folder, {num_conflicts} conflicts{', trash emptied' if trash_emptied else ''}."
     )
 else:
     print(
