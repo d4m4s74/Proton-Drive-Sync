@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import sys
@@ -422,7 +423,7 @@ log_level = config.get('log_level', default_log_level).lower()
 LEVEL_MAP = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
-    "quiet": logging.ERROR,
+    "quiet": logging.WARNING,
 }
 
 if log_level not in LEVEL_MAP:
@@ -586,9 +587,26 @@ if os.path.exists(BEFORE_RUN_SCRIPT):
 FIRST_RUN = False
 # Load state file
 if os.path.exists(STATE_FILE):
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
-        old_meta = {line.strip() for line in f if line.strip()}
     logging.debug(f"Loading old metadata from: {STATE_FILE}.")
+    with open(STATE_FILE, "r", encoding="utf-8") as f:
+        old_meta = set()
+        file_local_dir = ""
+        override_local_dir = False
+        first_line = f.readline()
+        if first_line:
+            first_line_parts = first_line.strip().split("::")
+            if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != LOCAL_DIR:
+                file_local_dir = first_line_parts[1]
+                override_local_dir = True
+                logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
+            elif first_line_parts[0] != "i":
+                old_meta.add(first_line.strip())
+        for line in f:
+            if override_local_dir:
+                old_meta.add(line.strip().replace(file_local_dir, LOCAL_DIR))
+            else:
+                old_meta.add(line.strip())
+
 else:
     FIRST_RUN = True
     logging.info("No state file found. Attempt to download remote state file")
@@ -596,7 +614,23 @@ else:
     if os.path.exists(STATE_FILE):
         logging.info("Remote state file found")
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            old_meta = {line.strip() for line in f if line.strip()}
+            old_meta = set()
+            file_local_dir = ""
+            override_local_dir = False
+            first_line = f.readline()
+            if first_line:
+                first_line_parts = first_line.strip().split("::")
+                if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != LOCAL_DIR:
+                    file_local_dir = first_line_parts[1]
+                    override_local_dir = True
+                    logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
+                elif first_line_parts[0] != "i":
+                    old_meta.add(first_line.strip())
+            for line in f:
+                if override_local_dir:
+                    old_meta.add(line.strip().replace(file_local_dir, LOCAL_DIR))
+                else:
+                    old_meta.add(line.strip())
     else:
         # Catch Node not found or any other download glitch safely
         error_msg = result.stderr.strip()
@@ -739,7 +773,8 @@ if TWO_WAY:
 # Save and upload the state file. This also works as a keepalive
 logging.info(f"Saving metadata in {STATE_FILE}")
 with open(STATE_FILE, "w", encoding="utf-8") as f:
-   f.write("\n".join(meta))
+    f.write(f"i::{LOCAL_DIR}\n")
+    f.write("\n".join(meta))
 
 result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', STATE_FILE, REMOTE_DIR, '-j'])
 logging.debug(f"State file upload CLI execution results: {result}")
