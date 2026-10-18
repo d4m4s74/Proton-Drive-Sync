@@ -113,7 +113,7 @@ def calculate_remote_changes(meta, filenames, old_meta): #Calculates things to c
         path = file.split('::')[1]
         if path in filenames: #If the file is being replaced, not removed, do not count as deletion.
             total_replaced += 1
-    total_deleted = len(delete)
+    total_deleted = len(delete) - total_replaced
     
     total_uploaded = total_uploaded - total_replaced
     temp = delete.copy()
@@ -568,7 +568,6 @@ if os.path.exists(BEFORE_RUN_SCRIPT):
         logging.error(f"Failed to execute pre-backup hook due to an unexpected error: {e}. Aborting sync!")
         sys.exit(1)
         
-    logging.info("Pre-backup hook completed successfully. Proceeding with sync.")
 
 
 FIRST_RUN = False
