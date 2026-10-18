@@ -20,8 +20,8 @@ I have designed and written the logic myself, though I have used AI (Gemini) as 
 The docker_runner.py script was generated as a quick addition for ease of deployment with only a few small manual changes to reduce complexity
 
 ## Requirements
-Python 3.12 or later
-Proton Drive CLI
+- Python 3.12 or later
+- Proton Drive CLI
 
 ## Prep
 
@@ -69,7 +69,7 @@ DAY_OF_WEEK=$(date +%u)
 sqlite3 /path/to/vaultwarden/db.sqlite3 ".backup '/path/to/backup/db_vault_day_${DAY_OF_WEEK}.sqlite3'"
 ```
 
-Make the hook file executable on your server:
+Make the hook file executable on your device:
 ```bash
 chmod +x before_run.sh
 ```
@@ -150,7 +150,7 @@ Note: Currently only tested for linux/x64, but it should also work on linux/arm6
 Your backup directory is mounted as **Read-Only (`:ro`)**, so the statefile is stored outside of the backup. It will be synced to Proton Drive but won't be in the local folder
 
 ### Configure via Docker Compose
-Create an empty directory on your server, open a file named `docker-compose.yml`, and paste the following setup:
+Create an empty directory on your device, open a file named `docker-compose.yml`, and paste the following setup:
 
 ```yaml
 services:
