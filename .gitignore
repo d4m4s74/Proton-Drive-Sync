@@ -4,3 +4,5 @@ config.toml
 test_data/
 test/
 notes
+test_proton_sync.py
+__pycache__

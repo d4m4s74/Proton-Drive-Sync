@@ -17,7 +17,8 @@ This application synchronizes a local backup folder to Proton Drive.
 
 This is a full manual rewrite of my original vibe coded Proton Drive Sync script  
 I have designed and written the logic myself, though I have used AI (Gemini) as a rubber duck and to find out about commands I haven't used before  
-The docker_runner.py script was generated as a quick addition for ease of deployment with only a few small manual changes to reduce complexity
+The docker_runner.py script was generated as a quick addition for ease of deployment with only a few small manual changes as the script was expanded 
+The test file was fully written by Gemini
 
 ## Requirements
 - Python 3.12 or later
