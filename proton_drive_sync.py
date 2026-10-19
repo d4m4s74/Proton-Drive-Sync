@@ -201,19 +201,19 @@ def calculate_local_changes(meta, old_meta, remote_meta): #calculate things to c
     return download, all_downloads, total_downloaded, total_replaced, local_delete, total_deleted
 
 
-def resolve_conflicts(download, upload, local_delete, remote_delete, meta, remote_meta): #note, updates the given dicts.
+def resolve_conflicts(download, upload, local_delete, remote_delete): #note, updates the given dicts.
     num_conflicts = 0
 
     #upload vs deletion. Upload always wins.
     for name in list(upload.keys()):
-        if name in local_delete and name not in remote_meta:
+        if name in local_delete and name not in download:
             num_conflicts += 1
             logging.info(f"Conflict deleted file or folder {name} uploaded to remote")
             local_delete.pop(name)
 
     #download vs deletion. download always wins.
     for name in list(download.keys()):
-        if name in remote_delete and name not in meta:
+        if name in remote_delete and name not in upload:
             num_conflicts += 1
             logging.info(f"Conflict deleted file or folder {name} redownloaded from remote")
             remote_delete.pop(name)
@@ -230,6 +230,8 @@ def resolve_conflicts(download, upload, local_delete, remote_delete, meta, remot
         shutil.move(src, dst)
         upload.pop(name, None)
         logging.warning(f"Conflict: Local item {src} moved to conflict folder as {conflict_filename}")
+        if name in local_delete:
+            local_delete.pop(name)
 
     def resolve_local(name):
         remote_node = download[name]
@@ -606,7 +608,7 @@ def main():
 
         # Calculate the changes to do in the local folder 
         download, all_downloads, downloaded, local_replaced, local_delete, local_deleted = calculate_local_changes(meta, old_meta, remote_meta)
-        num_conflicts = resolve_conflicts(download, upload, local_delete, remote_delete, meta, remote_meta)
+        num_conflicts = resolve_conflicts(download, upload, local_delete, remote_delete)
     else:
         download, all_downloads, downloaded, local_replaced, local_delete, local_deleted = dict(), dict(), 0, dict(), dict(), 0
         num_conflicts = 0
