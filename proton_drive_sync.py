@@ -11,6 +11,7 @@ import shutil
 import atexit
 import random
 import tempfile
+
 from datetime import datetime
 
 class ProtonCliError(Exception):
@@ -711,16 +712,15 @@ for file in local_delete:
     elif target.is_file():
         target.unlink()         # Deletes a single file
         logging.info(f"Deleted local file {target}")
-    else:
-        print("should_be_unreachable")
-        print(target, target.is_dir(), target.is_file())
+    # elif target doesn exist do nothing (in case the file was deleted both locally and remotely)
 
 # Delete remote files
 for file in remote_delete:
     path = file.split('::')[1]
     server_path = local_path_to_remote(path)
     logging.info(f"Trashing {server_path}")
-    result = run_proton_cli(['filesystem', 'trash', server_path, '-j'], False)
+    #Set fail to false in case the file was deleted both locally and remotely
+    result = run_proton_cli(['filesystem', 'trash', server_path, '-j'], False) 
     logging.debug(f"File/folder deletion CLI execution results: {result}")
 
 # Uploading the new files
@@ -740,7 +740,7 @@ for file in download:
     server_path = local_path_to_remote(path)
     target_folder = os.path.split(path)[0]
     logging.info(f"Downloading {server_path} to {target_folder}")
-    result = run_proton_cli(['filesystem', 'download', '-f', 'remove', '-d', 'merge', server_path, fix_local_path(target_folder), "-j"])
+    result = run_proton_cli(['filesystem', 'download', '-f', 'remove', '-d', 'merge', server_path, fix_local_path(target_folder), "-j"], False)
     logging.debug(f"File/folder download CLI execution results: {result}")
 
 #Restore mtimes for downloaded files
