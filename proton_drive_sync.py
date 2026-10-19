@@ -128,10 +128,17 @@ def calculate_remote_changes(meta, old_meta):
     total_replaced = 0
     delete_set = set(old_meta.items()) - set(meta.items()) 
     delete = dict(delete_set)
-    for file in delete.keys():
+    for file in list(delete.keys()):
         if file in meta:
-            total_replaced += 1
-    total_deleted = len(delete) - total_replaced
+            if  meta[file].type == delete[file].type:
+                # Same type! It's a standard modification, not a deletion. Safe to remove.
+                total_replaced += 1
+                delete.pop(file)  # <--- REMOVE from delete map to prevent ghost conflicts!
+            else:
+                # Type mismatch! (e.g., file became directory). Keep in delete queue
+                # so the engine purges the old type before uploading the new type.
+                logging.info(f"Type mismatch detected for {file}. Retention forced in deletion queue.")
+    total_deleted = len(delete)
     total_uploaded = total_uploaded - total_replaced
     for file in list(delete.keys()):
         current = file
@@ -167,10 +174,18 @@ def calculate_local_changes(meta, old_meta, remote_meta): #calculate things to c
     local_delete_set = set(old_meta.items()) - set(remote_meta.items()) 
     local_delete = dict(local_delete_set)
     total_replaced = 0
-    for file in local_delete.keys():
+    for file in list(local_delete.keys()):
         if file in remote_meta: 
-            total_replaced += 1
-    total_deleted = len(local_delete) - total_replaced
+            if remote_meta[file].type == local_delete[file].type:
+                # Same type! It's a standard modification, not a deletion. Safe to remove.
+                total_replaced += 1
+                local_delete.pop(file)  # <--- REMOVE from delete map to prevent ghost conflicts!
+            else:
+                # Type mismatch! (e.g., file became directory). Keep in delete queue
+                # so the engine purges the old type before uploading the new type.
+                logging.info(f"Type mismatch detected for {file}. Retention forced in deletion queue.")
+
+    total_deleted = len(local_delete)
     total_downloaded -= total_replaced
     for file in list(local_delete.keys()):
         current = file
@@ -191,14 +206,14 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
 
     #upload vs deletion. Upload always wins.
     for name in list(upload.keys()):
-        if name in local_delete:
+        if name in local_delete and name not in remote_meta:
             num_conflicts += 1
             logging.info(f"Conflict deleted file or folder {name} uploaded to remote")
             local_delete.pop(name)
 
     #download vs deletion. download always wins.
     for name in list(download.keys()):
-        if name in remote_delete:
+        if name in remote_delete and name not in meta:
             num_conflicts += 1
             logging.info(f"Conflict deleted file or folder {name} redownloaded from remote")
             remote_delete.pop(name)
