@@ -240,6 +240,8 @@ def resolve_conflicts(download, upload, local_delete, remote_delete, meta, remot
             conflict_filename = f"{filename}_{START_TIME}{ext}"
         else:
             conflict_filename = f"{basename}_{START_TIME}"
+        if name in remote_delete:
+            remote_delete.pop(name)
             
         old_remote_path = local_path_to_remote(name)
         run_proton_cli(['filesystem', 'move', fix_remote_path(old_remote_path), fix_remote_path(CONFLICT_DIR_REMOTE), '-j'])
