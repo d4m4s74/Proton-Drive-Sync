@@ -201,7 +201,7 @@ def calculate_local_changes(meta, old_meta, remote_meta): #calculate things to c
     return download, all_downloads, total_downloaded, total_replaced, local_delete, total_deleted
 
 
-def resolve_conflicts(download, upload, local_delete, remote_delete): #note, updates the given dicts.
+def resolve_conflicts(download, upload, local_delete, remote_delete, meta, remote_meta): #note, updates the given dicts.
     num_conflicts = 0
 
     #upload vs deletion. Upload always wins.
@@ -604,7 +604,7 @@ def main():
 
         # Calculate the changes to do in the local folder 
         download, all_downloads, downloaded, local_replaced, local_delete, local_deleted = calculate_local_changes(meta, old_meta, remote_meta)
-        num_conflicts = resolve_conflicts(download, upload, local_delete, remote_delete)
+        num_conflicts = resolve_conflicts(download, upload, local_delete, remote_delete, meta, remote_meta)
     else:
         download, all_downloads, downloaded, local_replaced, local_delete, local_deleted = dict(), dict(), 0, dict(), dict(), 0
         num_conflicts = 0
