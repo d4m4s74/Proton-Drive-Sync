@@ -69,7 +69,7 @@ if TWO_WAY_ENV == "true" and stat_info.st_uid != USER:
 # 2. FIXED: Point 'proton_drive_binary' directly to the local executable file context
 CONFIG_TEMPLATE = f"""local_dir = "/data/backup"
 remote_dir = "{REMOTE_DIR}"
-proton_drive_binary = "./proton-drive"
+proton_drive_binary = "/app/proton-drive"
 proton_drive_cache_dir = "./.cache"
 unsafe_login = true
 empty_trash = {EMPTY_TRASH_TOML}
