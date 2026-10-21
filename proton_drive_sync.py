@@ -23,17 +23,17 @@ class ProtonCliError(Exception):
         self.cmd = cmd
         self.stderr = stderr
         super().__init__(f"Command '{' '.join(cmd)}' failed:\n{stderr}")
+class ProtonConnectionError(Exception):
+    """Raised when the Proton CLI encounters an unexpected connection or system error."""
+    pass
 
-IS_WINDOWS = os.name == 'nt'
-def fix_local_path(path):
-    if IS_WINDOWS:
-        return str(path).replace('/','\\')
-    else:
-        return str(path).replace('\\','/')
-            
-def fix_remote_path(path):
-    return str(path).replace('\\','/')
-    
+def local_path_to_remote(path):
+    relative_path = path.relative_to(LOCAL_DIR)
+    return REMOTE_DIR/ relative_path.as_posix()
+
+def remote_path_to_local(path):
+    relative_path = path.relative_to(REMOTE_DIR)
+    return LOCAL_DIR / relative_path.as_posix()
     
 
 def is_path_readonly(path):
@@ -56,17 +56,116 @@ def run_proton_cli(args, fail=True):
     logging.debug(f"Executing CLI command: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.stderr.strip() and fail:
-        logging.error(f"Unexpected CLI error for command '{' '.join(cmd)}':\n{result.stderr}")
         raise ProtonCliError(cmd, result.stderr)
     return result 
 
-def local_path_to_remote(path):
-    relative_path = path.relative_to(LOCAL_DIR)
-    return REMOTE_DIR/ relative_path.as_posix()
+def proton_check_logged_in(cli_runner=run_proton_cli):
+    result = run_proton_cli(['filesystem', 'info', '/my-files', '-j'],False)
+    logging.debug(f"Logged in test (filesystem info /my-files) CLI execution results: {result}")
+    if "You need to login first" in result.stderr:
+        return False
+    elif result.stderr.strip():
+        raise ProtonConnectionError(result.stderr.strip())
+    else:
+        return True
 
-def remote_path_to_local(path):
-    relative_path = path.relative_to(REMOTE_DIR)
-    return LOCAL_DIR / relative_path.as_posix()
+def proton_upload(src, dest, file_action='replace', dir_action='merge', skip_thumbnails=True, fail=False):
+    cmd = ['filesystem', 'upload', '-f', file_action, '-d', dir_action, str(src), str(dest), '-j']
+    if skip_thumbnails:
+        cmd.append("--skip-thumbnails")
+    result = run_proton_cli(cmd, fail)
+    logging.debug(f"File/folder upload CLI execution results: {result}")
+    if result.stderr.strip():
+        return False, result.stderr.strip()
+    else:
+        try:
+            data = json.loads(result.stdout)
+            return True, data
+        except json.JSONDecodeError:
+            return False, result.stdout.strip()
+
+def proton_download(src, dest, file_action='remove', dir_action='merge', fail=False):
+    cmd = ['filesystem', 'download', '-f', file_action, '-d', dir_action, str(src), str(dest), '-j']
+        
+    result = run_proton_cli(cmd, fail)
+    logging.debug(f"Download CLI execution results: {result}")
+    
+    # Check if stderr captured a failure message (like "Node not found" or "not supported")
+    if result.stderr.strip():
+        return False, result.stderr.strip()
+    else:
+        try:
+            data = json.loads(result.stdout)
+            # Optional extra check: sometimes CLI exits 0 with JSON but logs failures inside the JSON
+            if data.get('failedItems', 0) > 0:
+                return False, data.get('failures', 'Unknown download failure')
+            return True, data
+        except json.JSONDecodeError:
+            return True, result.stdout.strip()
+
+def proton_trash(path, fail=False):
+    cmd = ['filesystem', 'trash', str(path), '-j']
+    
+    result = run_proton_cli(cmd, fail)
+    logging.debug(f"Trash CLI execution results: {result}")
+    
+    if result.stderr.strip():
+        if fail:
+            raise ProtonCliError(cmd, result.stderr.strip())
+        return False
+        
+    return True
+
+def proton_info(path): #Returns dictionary of file info
+    cmd = ['filesystem', 'info', str(path), '-j']
+    result = run_proton_cli(cmd, False)
+    logging.debug(f"Proton Info CLI execution results: {result}")
+    if not result.stderr.strip():
+        return json.loads(result.stdout)
+    else:
+        raise ProtonCliError(cmd, result.stderr.strip())
+
+def proton_file_exists(path): #Returns success boolean and first node not found
+    try:
+        proton_info(path)
+        return True, ""
+    except ProtonCliError as e:
+        error = str(e)
+        if "Node not found" in error:
+            node = error.strip().split("Node not found: ")[1]
+            return False, node
+        else:
+            raise
+
+
+def proton_list(path):
+    result = run_proton_cli(['filesystem', 'list', str(path), '-j'])
+    logging.debug(f"Proton List execution results: {result}")
+    items = json.loads(result.stdout)
+    return items
+
+def proton_move_rename(src,dest):
+    old_remote_path = local_path_to_remote(src)
+    run_proton_cli(['filesystem', 'move', str(old_remote_path), str(CONFLICT_DIR_REMOTE), '-j'])
+    if src.name != dest.name:
+        moved_remote_target = CONFLICT_DIR_REMOTE / src.name
+        run_proton_cli(['filesystem', 'rename', str(moved_remote_target), dest.name, '-j'])
+
+def proton_create_folder(path, name, fail=False):
+    try:
+        result = run_proton_cli(['filesystem', 'create-folder', path, name, '-j'])
+        logging.debug(f"Folder creation CLI execution results: {result}")
+        return True
+    except:
+        if fail:
+            raise
+        return False
+
+def proton_empty_trash():
+    result = run_proton_cli(['filesystem', 'empty-trash'])
+    logging.debug(f"Empty trash CLI execution results: {result}")
+    
+
 
 #local walk
 def local_walk():
@@ -90,9 +189,7 @@ def remote_crawl(current_remote_path: PurePosixPath = None):
         current_remote_path = REMOTE_DIR
     logging.debug(f"Crawling remote folder {current_remote_path}")
     meta = dict()
-    result = run_proton_cli(['filesystem', 'list', str(current_remote_path), '-j'])
-    logging.debug(f"Remote crawl CLI execution results: {result}")
-    items = json.loads(result.stdout)
+    items = proton_list(current_remote_path)
     for item in items:
         filename = item['name']['value']
         if filename == STATE_FILE_NAME or filename == ".proton_sync.lock":
@@ -139,8 +236,7 @@ def calculate_remote_changes(meta, old_meta):
                 total_replaced += 1
                 delete.pop(file)  # REMOVE from delete map to prevent ghost conflicts!
             else:
-                # Type mismatch! (e.g., file became directory). Keep in delete queue
-                # so the engine purges the old type before uploading the new type.
+                # Type mismatch. Keep in delete queue
                 logging.info(f"Type mismatch detected for {file}. Retention forced in deletion queue.")
                 
     total_deleted = len(delete)
@@ -158,7 +254,6 @@ def calculate_remote_changes(meta, old_meta):
 
 
 def calculate_local_changes(meta, old_meta, remote_meta): #calculate things to change in the local folder
-    # 1. Perform set math on items and instantly convert to dict
     download_set = set(remote_meta.items()) - set(old_meta.items()) 
     download = dict(download_set)
     total_downloaded = len(download)
@@ -195,12 +290,13 @@ def calculate_local_changes(meta, old_meta, remote_meta): #calculate things to c
 
 def resolve_conflicts(download, upload, local_delete, remote_delete): #note, updates the given dicts.
     num_conflicts = 0
+    false_conflicts = 0
     new_uploads = dict()
     #upload vs deletion. Upload always wins.
     for name in list(upload.keys()):
         if name in local_delete and name not in download:
             num_conflicts += 1
-            logging.info(f"Conflict deleted file or folder {name} uploaded to remote")
+            logging.info(f"Conflict deleted file or folder {name} reuploaded to remote")
             local_delete.pop(name)
 
     #download vs deletion. download always wins.
@@ -211,6 +307,14 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
             remote_delete.pop(name)
 
     def resolve_remote(name):
+        nonlocal num_conflicts, false_conflicts
+        if upload[name] == download[name]:
+            logging.info(f"No conflict: local file {name} equal to remote")
+            false_conflicts += 1
+            download.pop(name)
+            upload.pop(name)
+            return
+        num_conflicts += 1
         old_node = upload[name]
         if upload[name].type == 'f': 
             filename, ext = name.stem, name.suffix
@@ -226,6 +330,14 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         logging.warning(f"Conflict: Local item {name} moved to conflict folder as {conflict_filename}")
 
     def resolve_local(name):
+        nonlocal num_conflicts, false_conflicts
+        if upload[name] == download[name]:
+            logging.info(f"No conflict: local item {name} equal to remote")
+            false_conflicts += 1
+            download.pop(name)
+            upload.pop(name)
+            return
+        num_conflicts += 1
         remote_node = download[name]
         download.pop(name, None)
         if remote_node.type == 'f': 
@@ -236,10 +348,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         if name in remote_delete:
             remote_delete.pop(name)
             
-        old_remote_path = local_path_to_remote(name)
-        run_proton_cli(['filesystem', 'move', str(old_remote_path), str(CONFLICT_DIR_REMOTE), '-j'])
-        moved_remote_target = CONFLICT_DIR_REMOTE / name.name
-        run_proton_cli(['filesystem', 'rename', str(moved_remote_target), conflict_filename, '-j'])
+        proton_move_rename(name,CONFLICT_DIR/conflict_filename)
         
         local_conflict_destination = CONFLICT_DIR / conflict_filename
         download[local_conflict_destination] = remote_node
@@ -247,8 +356,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
 
     def get_remote_folder_mtime(name):
         remote_path = local_path_to_remote(name)
-        result = run_proton_cli(['filesystem', 'info', str(remote_path), '-j'])
-        item = json.loads(result.stdout)
+        item = proton_info(remote_path)
         dt = datetime.fromisoformat(item['modificationTime'].replace("Z", "+00:00"))
         return int(dt.timestamp())
 
@@ -271,24 +379,21 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
 
     if RESOLVE_STRATEGY == "remote":
         for name in list(set(download.keys()) & set(upload.keys())):
-            num_conflicts += 1
             resolve_remote(name)
             
     elif RESOLVE_STRATEGY == "local":
         for name in list(set(download.keys()) & set(upload.keys())):
-            num_conflicts += 1
             resolve_local(name)
             
     else: # RESOLVE_STRATEGY == "newest"
         conflicting_paths = list(set(download.keys()) & set(upload.keys()))
         for name in conflicting_paths:
-            num_conflicts += 1
             if is_local_newest(name):
                 resolve_local(name)
             else:
                 resolve_remote(name)
         
-    return num_conflicts, new_uploads
+    return num_conflicts, false_conflicts, new_uploads
 
 
 def main():
@@ -319,9 +424,11 @@ def main():
     if sys.stdin.isatty():
         default_log_level = "info"
         log_handlers = [logging.StreamHandler(sys.stdout)]
+        IS_CRON = False
     else:
         default_log_level = "quiet"
         log_handlers = [logging.StreamHandler(sys.stderr)]
+        IS_CRON = True
 
     log_level = config.get('log_level', default_log_level).lower()
 
@@ -388,17 +495,12 @@ def main():
 
     #Test command to see if logged in
     logging.info("Testing login status")
-    result = run_proton_cli(['filesystem', 'info', '/my-files', '-j'],False)
-    logging.debug(f"Logged in test (filesystem info /my-files) CLI execution results: {result}")
-    if "You need to login first" in result.stderr:
+    if not proton_check_logged_in():
         if sys.stdin.isatty():
             subprocess.run([PROTON_DRIVE_BINARY, "auth", "login"], check=True)
         else:
             logging.error(f"Proton Drive not logged in. Run 'python3 {sys.argv[0]}' in the terminal to log in")
             sys.exit(1)
-    elif result.stderr.strip():
-        logging.error(f"Unable to connect to Proton Drive\n {result.stderr}")
-        sys.exit(1)
 
     # Lock check and locking to prevent two devices syncing at the same time.
     logging.info("Locking remote folder")
@@ -412,16 +514,15 @@ def main():
 
     # Add a small random jitter (0 to 5 seconds) to prevent simultaneous cron jobs 
     # from locking horns repeatedly on every retry.
-    initial_jitter = random.uniform(0, 5)
-    logging.debug(f"Sync lock contention check: waiting {initial_jitter:.2f}s jitter...")
-    time.sleep(initial_jitter)
+    if TWO_WAY and IS_CRON:
+        initial_jitter = random.uniform(0, 5)
+        logging.debug(f"Sync lock contention check: waiting {initial_jitter:.2f}s jitter...")
+        time.sleep(initial_jitter)
 
     while waited_seconds < MAX_WAIT_SECONDS:
         # Check if remote lock exists
-        result = run_proton_cli(['filesystem', 'info', str(REMOTE_LOCK_FILE), '-j'], fail=False)
-        
-        if result.stderr.strip():
-            # Lock file does not exist (or parent doesn't exist/error indicating it's free)
+        file_exists, _ = proton_file_exists(REMOTE_LOCK_FILE)
+        if not file_exists:
             break
             
         logging.info(f"Remote lock file detected. Another device is syncing. Waiting... ({waited_seconds}/{MAX_WAIT_SECONDS}s)")
@@ -436,9 +537,8 @@ def main():
     try:
         retry = MAX_WAIT_SECONDS
         while True: #loop this until it breaks
-            subresult = run_proton_cli(['filesystem', 'upload', '-f', 'skip', str(local_lock_temp), str(REMOTE_DIR), '-j'], fail=True)
-            logging.debug(f"Remote lock acquisition result: {subresult}")
-            if json.loads(subresult.stdout).get('skippedItems') > 0: #if the lock file was uploaded between checking and locking (should never happen)
+            success, output = proton_upload(local_lock_temp, REMOTE_DIR, file_action="skip", fail=True)
+            if output.get('skippedItems') > 0: #if the lock file was uploaded between checking and locking (should never happen)
                 if retry > 0:
                     logging.warning(f"Race condition. File created by other device between check and creation. Retrying for {retry} seconds.")
                     retry -= POLL_INTERVAL_SECONDS
@@ -460,11 +560,10 @@ def main():
 
     def cleanup_remote_lock():
         logging.info("Removing remote sync lock...")
-        run_proton_cli(['filesystem', 'trash', str(REMOTE_LOCK_FILE), '-j'], fail=False)
+        proton_trash(REMOTE_LOCK_FILE)
 
     # Register it down here after definition
     atexit.register(cleanup_remote_lock)
-
 
     # Run hook script before running bakup
     BEFORE_RUN_SCRIPT = SCRIPT_DIR / "before_run.sh"
@@ -503,47 +602,45 @@ def main():
     if not STATE_FILE.exists():
         FIRST_RUN = True
         logging.info("No state file found. Attempt to download remote state file")
-        result = run_proton_cli(['filesystem', 'download', str(REMOTE_DIR / STATE_FILE_NAME), str(STATE_FILE.parent)], False)
-
-    if STATE_FILE.exists():
-        logging.info(f"Loading {'remote ' if FIRST_RUN else ''}state file")
-        with STATE_FILE.open("r", encoding="utf-8") as f:
-            old_meta = dict()
-            file_local_dir = ""
-            override_local_dir = False
-            first_line = f.readline()
-            if first_line:
-                first_line_parts = first_line.strip().split("::")
-                if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != str(LOCAL_DIR):
-                    file_local_dir = first_line_parts[1]
-                    override_local_dir = True
-                    logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
-                elif len(first_line_parts) > 1 and first_line_parts[0] != "i":
-                    # Fallback if the file didn't start with an info header block
-                    path_key = first_line_parts[1]
-                    if first_line_parts[0] == 'f':
-                        old_meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=int(first_line_parts[2]), size=int(first_line_parts[3]))
+        proton_download(REMOTE_DIR / STATE_FILE_NAME, STATE_FILE.parent, fail=False)
+    try:
+        if STATE_FILE.exists():
+            logging.info(f"Loading {'remote ' if FIRST_RUN else ''}state file")
+            with STATE_FILE.open("r", encoding="utf-8") as f:
+                old_meta = dict()
+                file_local_dir = ""
+                override_local_dir = False
+                first_line = f.readline()
+                if first_line:
+                    first_line_parts = first_line.strip().split("::")
+                    if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != str(LOCAL_DIR):
+                        file_local_dir = first_line_parts[1]
+                        override_local_dir = True
+                        logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
+                    elif len(first_line_parts) > 1 and first_line_parts[0] != "i":
+                        # Fallback if the file didn't start with an info header block
+                        path_key = first_line_parts[1]
+                        if first_line_parts[0] == 'f':
+                            old_meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=int(first_line_parts[2]), size=int(first_line_parts[3]))
+                        else:
+                            old_meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=0, size=0)
+                for line in f:
+                    parts = line.strip().split("::")
+                    if len(parts) < 2: 
+                        continue
+                    path_key = parts[1]
+                    if override_local_dir:
+                        path_key = path_key.replace(file_local_dir, str(LOCAL_DIR))
+                    if parts[0] == 'f':
+                        old_meta[Path(path_key)] = FileNode(type=parts[0], mtime=int(parts[2]), size=int(parts[3]))
                     else:
-                        old_meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=0, size=0)
-            for line in f:
-                parts = line.strip().split("::")
-                if len(parts) < 2: 
-                    continue
-                path_key = parts[1]
-                if override_local_dir:
-                    path_key = path_key.replace(file_local_dir, str(LOCAL_DIR))
-                if parts[0] == 'f':
-                    old_meta[Path(path_key)] = FileNode(type=parts[0], mtime=int(parts[2]), size=int(parts[3]))
-                else:
-                    old_meta[Path(path_key)] = FileNode(type=parts[0], mtime=0, size=0)
-    else:
-        error_msg = result.stderr.strip()
-        if "Node not found" in error_msg:
-            logging.info("Remote state file does not exist yet (First run). Initializing fresh baseline.")
+                        old_meta[Path(path_key)] = FileNode(type=parts[0], mtime=0, size=0)
         else:
-            logging.warning(f"Failed to download remote state file ({error_msg}). Falling back to fresh sync baseline.")
-        
-        old_meta = dict()  # First run fallback
+            logging.info("Remote state file does not exist yet (First run). Initializing fresh baseline.")
+            old_meta = dict()  # First run fallback
+    except:
+        logging.error("Unable to load state file. Initializing fresh baseline")
+        old_meta = dict()
 
     logging.info(f"Starting walk of {LOCAL_DIR}")
     start_walk = time.perf_counter()
@@ -563,11 +660,9 @@ def main():
 
 
     # Preparation. Check if REMOTE_DIR exists and creating if necessary
-    result = run_proton_cli(['filesystem', 'info', str(REMOTE_DIR), '-j'],False) #this is double, but I need the output this time
-    logging.debug(f"REMOTE_DIR existence check CLI execution results: {result}")
-    if result.stderr.strip():
+    dir_exists, baddir = proton_file_exists(REMOTE_DIR) #this is double, but I need the output this time
+    if not dir_exists:
         logging.info(f"Creating {REMOTE_DIR}")
-        baddir = result.stderr.strip().split(": ")[1]
         parts = REMOTE_DIR.parts
         create = False
         path = "/"
@@ -576,8 +671,7 @@ def main():
                 create = True
             if create:
                 logging.info(f"Creating new folder {d} in {path}")
-                subresult = run_proton_cli(['filesystem', 'create-folder', path, d, '-j'])
-                logging.debug(f"Folder creation CLI execution results: {subresult}")
+                proton_create_folder(path, d, True)
             path = os.path.join(path, d)
 
     # Calculate the changes to do on proton_drive
@@ -586,17 +680,16 @@ def main():
     # Run actions for 2 way sync
     remote_meta = set()
     if TWO_WAY:
-        #preparation. Check if CONFLICT_DIR exists
-        result = run_proton_cli(['filesystem', 'info', str(CONFLICT_DIR_REMOTE), '-j'],False)
-        logging.debug(f"CONFLICT_DIR existence check CLI execution results: {result}")
-        if result.stderr.strip():
+        dir_exists, _ = proton_file_exists(CONFLICT_DIR_REMOTE)
+        if not dir_exists:
+            logging.info(f"Creating conflict directory at {CONFLICT_DIR_REMOTE}")
             parent_path = CONFLICT_DIR_REMOTE.parent
             folder_name = CONFLICT_DIR_REMOTE.name
-            subresult = run_proton_cli(['filesystem', 'create-folder', str(parent_path), folder_name, '-j'])
-            logging.debug(f"Folder creation CLI execution results: {subresult}")
+            proton_create_folder(parent_path, folder_name)
         logging.info(f"Starting crawl of {REMOTE_DIR}")
         start_crawl = time.perf_counter()
         remote_meta = remote_crawl()
+        logging.info(f"Finished crawl of {REMOTE_DIR}")
         logging.debug(f"Remote crawl results {remote_meta}")
         end_crawl = time.perf_counter()
         duration = end_crawl - start_crawl
@@ -605,8 +698,11 @@ def main():
 
         # Calculate the changes to do in the local folder 
         download, all_downloads, downloaded, local_replaced, local_delete, local_deleted = calculate_local_changes(meta, old_meta, remote_meta)
-        num_conflicts, new_uploads = resolve_conflicts(download, upload, local_delete, remote_delete)
+        num_conflicts, false_conflicts, new_uploads = resolve_conflicts(download, upload, local_delete, remote_delete)
         upload |= new_uploads
+        uploaded -= false_conflicts
+        downloaded -= false_conflicts
+        
     else:
         download, all_downloads, downloaded, local_replaced, local_delete, local_deleted = dict(), dict(), 0, dict(), dict(), 0
         num_conflicts = 0
@@ -626,37 +722,31 @@ def main():
         server_path = local_path_to_remote(file)
         logging.info(f"Trashing {server_path}")
         # Set fail to False in case the file was deleted both locally and remotely
-        result = run_proton_cli(['filesystem', 'trash', str(server_path), '-j'], False) 
-        logging.debug(f"File/folder deletion CLI execution results: {result}")
+        if not proton_trash(server_path):
+            logging.info(f"Trashing {server_path} failed, file moved or already trashed")
 
     # UPLOADING THE NEW FILES
     for file in list(upload.keys()):
         server_path = local_path_to_remote(file)
         target_folder = server_path.parent
         logging.info(f"Uploading {file} to {target_folder}")
-        result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', str(file), str(target_folder), '-j', "--skip-thumbnails"])
-        logging.debug(f"File/folder upload CLI execution results: {result}")
+        proton_upload(file, target_folder, fail=True)
 
     for file in list(download.keys()):
         server_path = local_path_to_remote(file)
         # If the file's parent is the root REMOTE_DIR, target is LOCAL_DIR. Otherwise, map it.
-        if file.parent == REMOTE_DIR:
-            target_folder = LOCAL_DIR
-        else:
-            target_folder = file.parent
+        target_folder = file.parent
         logging.info(f"Downloading {server_path} to {target_folder}")
-        result = run_proton_cli(['filesystem', 'download', '-f', 'remove', '-d', 'merge', str(server_path), str(target_folder), "-j"])
-        logging.debug(f"File/folder download CLI execution results: {result}")
+        result = proton_download(server_path, target_folder, fail=True)
 
     # Restore mtimes for downloaded files
     logging.debug("Restoring modification time for downloaded files")
     for file in all_downloads.keys():
         if all_downloads[file].type == 'f':
             mtime = all_downloads[file].mtime
-            local_file_path = LOCAL_DIR / file
-            if local_file_path.exists():
+            if file.exists():
                 try:
-                    os.utime(local_file_path, (mtime, mtime))
+                    os.utime(file, (mtime, mtime))
                     logging.debug(f"Restored mtime for {file} to {mtime}")
                 except Exception as e:
                     logging.error(f"Failed to restore mtime for {file}: {e}")
@@ -673,32 +763,39 @@ def main():
         logging.debug(f"Local directory walk completed in {duration:.4f} seconds.")
         logging.debug(f"Scanned {len(meta)} local items into the new state file")
 
-    # Save and upload the state file. This also works as a keepalive
+    # Save and upload the state file.
     logging.info(f"Saving metadata in {STATE_FILE}")
-
-    # Clean, single-line list comprehension replacing the loop structure completely
-    # Atomic dictionary evaluation pass
     state_file_lines = [
         f"f::{path}::{node.mtime}::{node.size}" if node.type == "f" else f"d::{path}"
         for path, node in meta.items()
     ]
+    payload = f"i::{LOCAL_DIR}\n" + "\n".join(state_file_lines)
 
-    with STATE_FILE.open("w", encoding="utf-8") as f:
-        f.write(f"i::{LOCAL_DIR}\n")
-        f.write("\n".join(state_file_lines))
+    state_dir = STATE_FILE.parent
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=state_dir, delete=False, encoding="utf-8") as tf:
+            tf.write(payload)
+            temp_path = tf.name
+        
+        os.replace(temp_path, STATE_FILE)
+        logging.debug("State file updated atomically.")
+        
+    except Exception as e:
+        logging.error(f"Failed to safely save state file: {e}")
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.unlink(temp_path) # Clean up the loose temp file if it failed
+        raise
 
-
-    result = run_proton_cli(['filesystem', 'upload', '-f', 'replace', '-d', 'merge', str(STATE_FILE), str(REMOTE_DIR), '-j'])
-    logging.debug(f"State file upload CLI execution results: {result}")
+    logging.info("Uploading new state file")
+    proton_upload(STATE_FILE, REMOTE_DIR, fail=True)
 
     trash_emptied = False
     if EMPTY_TRASH:
-        result = run_proton_cli(['filesystem', 'empty-trash'], False)
-        logging.debug(f"Empty trash CLI execution results: {result}")
-        
-        if result.stderr.strip():
+        try:
+            proton_empty_trash()
+        except ProtonCliError as e:
             # Log it as an error, but don't crash the script since the sync itself succeeded!
-            logging.error(f"Failed to empty Proton Drive trash:\n{result.stderr}")
+            logging.error(f"Failed to empty Proton Drive trash:\n {e}")
         else:
             # Only turn on the print text string if it succeeded cleanly
             trash_emptied = True
