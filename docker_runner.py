@@ -43,7 +43,7 @@ def recursive_chown(target_path, uid=1000, gid=1000):
 # 1. Gather all runtime parameters from Docker environment variables
 INTERVAL_HOURS = int(os.environ.get("INTERVAL_HOURS", 24))
 START_HOUR = os.environ.get("START_HOUR", None)
-REMOTE_DIR = os.environ.get("REMOTE_DIR", "/my-files/backup")
+REMOTE_DIR = os.environ.get("REMOTE_DIR", "/my-files/backup").strip('"\'')
 EMPTY_TRASH_ENV = os.environ.get("EMPTY_TRASH", "false").lower()
 TWO_WAY_ENV = os.environ.get("TWO_WAY", "false").lower()
 TWO_WAY_TOML = "true" if TWO_WAY_ENV in ["true", "1", "yes"] else "false"
@@ -51,6 +51,8 @@ RESOLVE_STRATEGY = os.environ.get("RESOLVE_STRATEGY", "newest").strip('"\'').low
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "quiet").strip('"\'').lower()
 USER = int(os.environ.get("USER",1000))
 GROUP = int(os.environ.get("GROUP",1000))
+TRUST_REMOTE_STATE_FILE = os.environ.get("TRUST_REMOTE_STATE_FILE", "true").lower()
+WATCH_DIR = os.environ.get("WATCH_DIR", "").strip('"\'')
 
 # Normalize boolean mapping for TOML template translation
 EMPTY_TRASH_TOML = "true" if EMPTY_TRASH_ENV in ["true", "1", "yes"] else "false"
@@ -76,6 +78,8 @@ empty_trash = {EMPTY_TRASH_TOML}
 log_level = "{LOG_LEVEL}"
 two_way = {TWO_WAY_TOML}
 resolve_strategy = "{RESOLVE_STRATEGY}"
+trust_remote_state_file = {TRUST_REMOTE_STATE_FILE}
+watch_dir = "{WATCH_DIR}"
 """
 
 logging.info("Generating system configuration file...")
@@ -130,4 +134,4 @@ while True:
 
     # 6. Process Cadence Interval Sleep
     logging.info(f"💤 Cadence complete. Sleeping for {INTERVAL_HOURS} hour(s)...")
-    time.sleep(INTERVAL_HOURS * 3600)
+    time.sleep(INTERVAL_HOURS * 3600 - time.time() % 3600)

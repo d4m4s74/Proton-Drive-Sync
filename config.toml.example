@@ -7,3 +7,5 @@ empty_trash = false # Optional. Empties the trash after sync completes. This inc
 # log_level = "info" #Optional. Options are "quiet", "info" and "debug". Defaults to "info" when running in the terminal and "quiet" when loaded by a script.
 two_way = false #optional. Setting to true enables 2 way sync between the local and remote directory
 # resolve_strategy = "newest" #Optional. Options are "newest", "local" and "remote". Defaults to "newest". losers are stored in ${REMOTE_DIR}/conflict
+trust_remote_state_file = true # Optional. Disables crawling and uses the remote state file to know what to sync. Misses manual uploads. Defaults to true
+# watch_dir = "${REMOTE_DIR}/watch" # Optional. Only used with trust_remote_state_file. Crawls this folder for manual uploads

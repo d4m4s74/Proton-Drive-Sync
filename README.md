@@ -24,9 +24,47 @@ The test file was fully written by Gemini
 - Python 3.12 or later
 - Proton Drive CLI
 
+## Config options
+### local_dir
+The local directory to synchronize with Proton Drive  .
+### remote_dir
+The remote directory to upload files to.  
+At Proton Drive this always starts with `/my-files/`
+### proton_drive_binary
+The location of the Proton Drive CLI binary.
+### proton_drive_cache_dir (Optional)
+The location for Proton Drive to store its cache. When not set it defaults to Proton Drive's default.  
+For defaults see https://github.com/ProtonDriveApps/sdk/blob/main/cli/README.md
+### unsafe_login (Optional)
+When set to true this stores the login information in the cache directory. When set to false or not set it uses your device's credential store.
+### empty_trash (Optional)
+When set to true the script empties the trash after running and permanently deletes anything in it.
+### log_level (Optional)
+Set to "quiet", "info" or "debug". Defaults to info when running manually, quiet when run by a cron job.
+### two_way (Optional)
+Enables two way sync. Useful when you synchronise a directory on two different devices to the same directory on Proton Drive. 
+Danger: When a file is changed or deleted remotely it will be changed deleted locally. Do not use for backups. 
+### resolve_strategy (Optional)
+Used with `two_way`. When a file is changed on multiple devices the script recognizes it as a conflict. Options are:  
+Newest: The file with the most recent modification time is saved in its original location. The older file is moved.  
+Local:  The file uploaded by the script is always saved in its original location. The existing file is moved.  
+Remote: The file already in the remote folder is kept at its original location. The new file is moved.
+### trust_remote_state_file (Optional)
+Used with two_way. Defaults to true.  
+When enabled, the script downloads the most recently uploaded state file and uses it to determine which files to download, avoiding a full crawl of the remote directory on every run.  
+Setting this to false makes the script crawl the entire remote directory on every run.  
+To detect files uploaded manually to Proton Drive without crawling the entire remote directory, you can configure watch_dir to scan a specific remote directory.
+This option was added at the request of the Proton Drive team to reduce unnecessary requests to the server.
+### watch_dir (Optional)
+Used when trust_remote_state_file is set to true (default). Crawls one remote directory on every run to detect files uploaded manually to Proton Drive.
+Set this to the remote path of the directory to watch. It must be a child directory of remote_dir.
+For example: `${REMOTE_DIR}/watch`
+
+
+
 ## Prep
 
-Download the appropriate version Proton Drive CLI from https://proton.me/download/drive/cli/index.html and save it somewhere you can find it. For example in the same directory as proton_drive_sync.py script.
+Download the appropriate version of Proton Drive CLI from https://proton.me/download/drive/cli/index.html and save it somewhere you can find it. For example in the same directory as proton_drive_sync.py script.
 
 This script uses a config file. Copy the example file and modify its contents:
 ```bash
@@ -34,19 +72,21 @@ cp config.toml.example config.toml
 ```
 ```toml
 local_dir = "${HOME}/backup"
-remote_dir = "/my-files/backup"  # Must always begin with /my-files/
+remote_dir = "/my-files/backup" #Always starts with /my-files/
+
 proton_drive_binary = "${SCRIPT_DIR}/proton-drive" 
-proton_drive_cache_dir = "${SCRIPT_DIR}/.cache"  # Optional path override
+# proton_drive_cache_dir = "${SCRIPT_DIR}/.cache" #optional, changes the cache directory from its default location
+# unsafe_login = false #Optional. Use if you don't have a credentials store. Defaults to false
 
-unsafe_login = false        # Set to true if headless/no keyring present
-empty_trash = false         # Set to true to automatically purge the remote trash folder post-sync
+# empty_trash = false # Optional. Empties the trash after sync completes. This includes files trashed outside of the script. Defaults to false
+# log_level = "info" #Optional. Options are "quiet", "info" and "debug". Defaults to "info" when running in the terminal and "quiet" when loaded by a script.
 
-two_way = false             # Set to true to enable two-way sync
-resolve_strategy = "newest" # Optional. Options are "newest", "local" and "remote". Defaults to "newest". losers are stored in ${REMOTE_DIR}/conflict
-
-# log_level = "info"        # Optional: "quiet", "info", or "debug"
+two_way = false #optional. Setting to true enables 2 way sync between the local and remote directory
+# resolve_strategy = "newest" #Optional. Options are "newest", "local" and "remote". Defaults to "newest". losers are stored in ${REMOTE_DIR}/conflict
+# trust_remote_state_file = true # Optional. Disables crawling and uses the remote state file to know what to sync. Misses manual uploads. Defaults to true
+# watch_dir = "${REMOTE_DIR}/watch" # Optional. Only used with trust_remote_state_file. Crawls this folder for manual uploads
 ```
-*The configuration parser naturally interprets and resolves both `${HOME}` (user profile paths) and `${SCRIPT_DIR}` (the local directory hosting the script file) for local_dir, proton_drive_binary and proton_drive_cache_dir.*
+*The configuration parser naturally interprets and resolves `${HOME}` (user profile paths), `${REMOTE_DIR}` (The remote directory on Proton Drive) and `${SCRIPT_DIR}` (the local directory hosting the script file) for local_dir, proton_drive_binary and proton_drive_cache_dir, and ${REMOTE_DIR} for watch_dir*
 
 ## Pre-Backup Hooks (Optional)
 
@@ -66,7 +106,7 @@ Paste your automated shell commands (Ensure the file begins with a proper Sheban
 # Get the numeric day of the week (1-7)
 DAY_OF_WEEK=$(date +%u)
 
-# Create an online hot-copy copy of your live Vaultwarden database
+# Create a backup copy of your live Vaultwarden database
 sqlite3 /path/to/vaultwarden/db.sqlite3 ".backup '/path/to/backup/db_vault_day_${DAY_OF_WEEK}.sqlite3'"
 ```
 
@@ -75,18 +115,6 @@ Make the hook file executable on your device:
 chmod +x before_run.sh
 ```
 *Note: If the `before_run.sh` script exits with an error status code (anything other than `0`), the master Python engine will automatically abort the synchronization process to protect your remote cloud backups from corruption.*
-
-## Two-Way Sync
-With Two-Way sync enabled files added to your remote folder manually or by a second instance are automatically downloaded to your local folder.  
-Modifications and deletions are also synchronised to your local folder.
-
-### Conflicts
-When a file is modified both on your local device and remote folder the "losing" file is tagged with the date and time and moved to the conflicts folder.  
-There are three types of conflict resolution:
-
-Newest: The file with the most recent modification time is saved in its original location. The older file is moved.  
-Local:  The file uploaded by the script is always saved in its original location. The existing file is moved.  
-Remote: The file already in the remote folder is kept at its original location. The new file is moved.
 
 
 ## Migrating from the old bash script
@@ -137,11 +165,12 @@ That means:
 
 ## State file
 
-The script keeps a local state file here:
+When not used with docker the script keeps a local state file here:
 
     `${LOCAL_DIR}/.proton_sync_state`
 
 This file lets the script detect what changed since the previous run.
+When used with Docker the state file is stored in the cache directory. 
 
 ## Docker Installation
 
@@ -162,15 +191,17 @@ services:
     container_name: proton-sync
     restart: unless-stopped
     environment:
-      - INTERVAL_HOURS=24
-      # - START_HOUR=2              # Optional: Un-comment to align initial run (e.g., 2 AM)
-      - REMOTE_DIR=/my-files/backup # Must always begin with /my-files/
-      - EMPTY_TRASH=false           # Optional: Set to true to automatically purge the remote trash folder post-sync
-      - TWO_WAY=false               # Optional: Enables two-way sync
-      - RESOLVE_STRATEGY=newest     # Optional. Options are newest, local and remote. Defaults to newest. Losers are stored in ${REMOTE_DIR}/conflict
-      - USER=1000                   # Optional: Set user and group to your user so downloaded files aren't owned by root.
-      - GROUP=1000                  # Optional: Set user and group to your user so downloaded files aren't owned by root.
-      - LOG_LEVEL=quiet             # Optional: Options are quiet, info and debug. Defaults to quiet
+      - USER=1000                         # Optional: Set user and group to your user so downloaded files aren't owned by root.
+      - GROUP=1000                        # Optional: Set user and group to your user so downloaded files aren't owned by root.
+      - INTERVAL_HOURS=24                 # Number of hours between sync
+      # - START_HOUR=2                    # Optional: Un-comment to align initial run (e.g., 2 AM)
+      - REMOTE_DIR=/my-files/backup       # Must always begin with /my-files/
+      - EMPTY_TRASH=false                 # Optional: Set to true to automatically purge the remote trash folder post-sync
+      - TWO_WAY=false                     # Optional: Enables two-way sync
+      # - RESOLVE_STRATEGY=newest           # Optional. Options are newest, local and remote. Defaults to newest. Losers are stored in ${REMOTE_DIR}/conflict
+      # - LOG_LEVEL=quiet                   # Optional: Options are quiet, info and debug. Defaults to quiet
+      # - TRUST_REMOTE_STATE_FILE=true      # Optional: Disables remote crawl (unless there is no state file). Defaults to True
+      # - WATCH_DIR=/my-files/backup/watch  # Optional: Only used when using the remote state file. Scans this dir for manually added files.
     volumes:
       # Map your host local source folder to the container's data workspace
       # For One-Way Sync / Backup Mode (Read-Only)

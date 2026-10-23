@@ -145,27 +145,82 @@ def proton_list(path):
     return items
 
 def proton_move_rename(src,dest):
-    old_remote_path = local_path_to_remote(src)
-    run_proton_cli(['filesystem', 'move', str(old_remote_path), str(CONFLICT_DIR_REMOTE), '-j'])
+    if src.parent != dest.parent:
+        run_proton_cli(['filesystem', 'move', str(src), str(dest.parent), '-j'])
     if src.name != dest.name:
-        moved_remote_target = CONFLICT_DIR_REMOTE / src.name
+        moved_remote_target = dest.parent / src.name
         run_proton_cli(['filesystem', 'rename', str(moved_remote_target), dest.name, '-j'])
 
-def proton_create_folder(path, name, fail=False):
+def proton_create_dir(path, name, fail=False):
     try:
-        result = run_proton_cli(['filesystem', 'create-folder', path, name, '-j'])
+        result = run_proton_cli(['filesystem', 'create-folder', str(path), str(name), '-j'])
         logging.debug(f"Folder creation CLI execution results: {result}")
         return True
-    except:
+    except ProtonCliError:
         if fail:
             raise
         return False
+
+def proton_create_remote_path(remote_path):
+    dir_exists, baddir = proton_file_exists(remote_path) #this is double, but I need the output this time
+    if not dir_exists:
+        logging.info(f"Creating {remote_path}")
+        parts = remote_path.parts
+        create = False
+        path = "/"
+        for d in parts:
+            if d == baddir:
+                create = True
+            if create:
+                logging.info(f"Creating new folder {d} in {path}")
+                proton_create_dir(path, d, True)
+            path = os.path.join(path, d)
 
 def proton_empty_trash():
     result = run_proton_cli(['filesystem', 'empty-trash'])
     logging.debug(f"Empty trash CLI execution results: {result}")
     
-
+def load_state_file(path, remote=False, fail=False):
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                meta = dict()
+                file_local_dir = ""
+                override_local_dir = False
+                first_line = f.readline()
+                if first_line:
+                    first_line_parts = first_line.strip().split("::")
+                    if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != str(LOCAL_DIR):
+                        file_local_dir = first_line_parts[1]
+                        override_local_dir = True
+                        if not remote:
+                            logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
+                    elif len(first_line_parts) > 1 and first_line_parts[0] != "i":
+                        # Fallback if the file didn't start with an info header block
+                        path_key = first_line_parts[1]
+                        if first_line_parts[0] == 'f':
+                            meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=int(first_line_parts[2]), size=int(first_line_parts[3]))
+                        else:
+                            meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=0, size=0)
+                for line in f:
+                    parts = line.strip().split("::")
+                    if len(parts) < 2: 
+                        continue
+                    path_key = parts[1]
+                    if override_local_dir:
+                        path_key = path_key.replace(file_local_dir, str(LOCAL_DIR))
+                    if parts[0] == 'f':
+                        meta[Path(path_key)] = FileNode(type=parts[0], mtime=int(parts[2]), size=int(parts[3]))
+                    else:
+                        meta[Path(path_key)] = FileNode(type=parts[0], mtime=0, size=0)
+            return meta
+        except Exception as e:
+            if not fail:
+                return None
+            else:
+                raise
+    else:
+        return None
 
 #local walk
 def local_walk():
@@ -291,7 +346,6 @@ def calculate_local_changes(meta, old_meta, remote_meta): #calculate things to c
 def resolve_conflicts(download, upload, local_delete, remote_delete): #note, updates the given dicts.
     num_conflicts = 0
     false_conflicts = 0
-    new_uploads = dict()
     #upload vs deletion. Upload always wins.
     for name in list(upload.keys()):
         if name in local_delete and name not in download:
@@ -308,7 +362,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
 
     def resolve_remote(name):
         nonlocal num_conflicts, false_conflicts
-        if upload[name] == download[name]:
+        if upload[name].type == 'f' and upload[name] == download[name]: #Unfortunately I am not able to detect if a directory is a false conflict
             logging.info(f"No conflict: local file {name} equal to remote")
             false_conflicts += 1
             download.pop(name)
@@ -326,12 +380,12 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         upload.pop(name, None)
         if name in local_delete:
             local_delete.pop(name)
-        new_uploads[dst] = old_node
+        upload[dst] = old_node
         logging.warning(f"Conflict: Local item {name} moved to conflict folder as {conflict_filename}")
 
     def resolve_local(name):
         nonlocal num_conflicts, false_conflicts
-        if upload[name] == download[name]:
+        if upload[name].type == 'f' and upload[name] == download[name]: #Unfortunately I am not able to detect if a directory is a false conflict
             logging.info(f"No conflict: local item {name} equal to remote")
             false_conflicts += 1
             download.pop(name)
@@ -348,7 +402,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         if name in remote_delete:
             remote_delete.pop(name)
             
-        proton_move_rename(name,CONFLICT_DIR/conflict_filename)
+        proton_move_rename(local_path_to_remote(name),CONFLICT_DIR_REMOTE/conflict_filename)
         
         local_conflict_destination = CONFLICT_DIR / conflict_filename
         download[local_conflict_destination] = remote_node
@@ -393,7 +447,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
             else:
                 resolve_remote(name)
         
-    return num_conflicts, false_conflicts, new_uploads
+    return num_conflicts, false_conflicts
 
 
 def main():
@@ -401,7 +455,7 @@ def main():
     global HOME_DIR, LEVEL_MAP, LOCAL_DIR, MAX_WAIT_SECONDS, POLL_INTERVAL_SECONDS
     global PROTON_DRIVE_BINARY, REMOTE_DIR, REMOTE_LOCK_FILE, RESOLVE_STRATEGY
     global RESOLVE_STRATEGY_OPTIONS, SCRIPT_DIR, START_TIME, STATE_FILE, TWO_WAY
-    global STATE_FILE_NAME
+    global STATE_FILE_NAME, TRUST_REMOTE_STATE_FILE, WATCH_DIR
 
 
     SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -472,9 +526,20 @@ def main():
     CONFLICT_DIR = LOCAL_DIR / "conflicts"
     CONFLICT_DIR_REMOTE = REMOTE_DIR / "conflicts"
     TWO_WAY = config.get('two_way', False)
+    if not isinstance(TWO_WAY, bool):
+        TWO_WAY = False
     if TWO_WAY and is_path_readonly(LOCAL_DIR):
         logging.error(f"{LOCAL_DIR} mounted as read-only. Unable to run Two-Way sync. Exited to protect remote files.")
         sys.exit(1)
+    TRUST_REMOTE_STATE_FILE = config.get('trust_remote_state_file', False)
+    if not isinstance(TRUST_REMOTE_STATE_FILE, bool):
+        TRUST_REMOTE_STATE_FILE = True
+
+    WATCH_DIR = None
+    if 'watch_dir' in config and config['watch_dir'] != "":
+        path = PurePosixPath(config['watch_dir'].replace("${REMOTE_DIR}", str(REMOTE_DIR)))
+        if path.is_relative_to(REMOTE_DIR):
+            WATCH_DIR = path
 
     # Check for the explicit Docker image environment flag
     if os.environ.get("AM_I_DOCKER") == "true":
@@ -538,7 +603,7 @@ def main():
         retry = MAX_WAIT_SECONDS
         while True: #loop this until it breaks
             success, output = proton_upload(local_lock_temp, REMOTE_DIR, file_action="skip", fail=True)
-            if output.get('skippedItems') > 0: #if the lock file was uploaded between checking and locking (should never happen)
+            if not success or output.get('skippedItems') > 0: #if the lock file was uploaded between checking and locking (should never happen)
                 if retry > 0:
                     logging.warning(f"Race condition. File created by other device between check and creation. Retrying for {retry} seconds.")
                     retry -= POLL_INTERVAL_SECONDS
@@ -597,49 +662,19 @@ def main():
             
 
 
-    FIRST_RUN = False
     # Load state file
-    if not STATE_FILE.exists():
+    logging.info(f"Loading old state from {STATE_FILE}")
+    old_meta = load_state_file(STATE_FILE)
+    if old_meta:
+        FIRST_RUN = False
+    else:
         FIRST_RUN = True
-        logging.info("No state file found. Attempt to download remote state file")
-        proton_download(REMOTE_DIR / STATE_FILE_NAME, STATE_FILE.parent, fail=False)
-    try:
-        if STATE_FILE.exists():
-            logging.info(f"Loading {'remote ' if FIRST_RUN else ''}state file")
-            with STATE_FILE.open("r", encoding="utf-8") as f:
-                old_meta = dict()
-                file_local_dir = ""
-                override_local_dir = False
-                first_line = f.readline()
-                if first_line:
-                    first_line_parts = first_line.strip().split("::")
-                    if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != str(LOCAL_DIR):
-                        file_local_dir = first_line_parts[1]
-                        override_local_dir = True
-                        logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
-                    elif len(first_line_parts) > 1 and first_line_parts[0] != "i":
-                        # Fallback if the file didn't start with an info header block
-                        path_key = first_line_parts[1]
-                        if first_line_parts[0] == 'f':
-                            old_meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=int(first_line_parts[2]), size=int(first_line_parts[3]))
-                        else:
-                            old_meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=0, size=0)
-                for line in f:
-                    parts = line.strip().split("::")
-                    if len(parts) < 2: 
-                        continue
-                    path_key = parts[1]
-                    if override_local_dir:
-                        path_key = path_key.replace(file_local_dir, str(LOCAL_DIR))
-                    if parts[0] == 'f':
-                        old_meta[Path(path_key)] = FileNode(type=parts[0], mtime=int(parts[2]), size=int(parts[3]))
-                    else:
-                        old_meta[Path(path_key)] = FileNode(type=parts[0], mtime=0, size=0)
-        else:
-            logging.info("Remote state file does not exist yet (First run). Initializing fresh baseline.")
-            old_meta = dict()  # First run fallback
-    except:
-        logging.error("Unable to load state file. Initializing fresh baseline")
+        logging.info(f"State file empty or not found, attempting to load remote state file")
+        if proton_file_exists(REMOTE_DIR / STATE_FILE_NAME):
+            proton_download(REMOTE_DIR / STATE_FILE_NAME, LOCAL_DIR)
+            old_meta = load_state_file(STATE_FILE)
+    if not old_meta:
+        logging.info("Unable to load state file. Initializing fresh baseline")
         old_meta = dict()
 
     logging.info(f"Starting walk of {LOCAL_DIR}")
@@ -660,46 +695,62 @@ def main():
 
 
     # Preparation. Check if REMOTE_DIR exists and creating if necessary
-    dir_exists, baddir = proton_file_exists(REMOTE_DIR) #this is double, but I need the output this time
-    if not dir_exists:
-        logging.info(f"Creating {REMOTE_DIR}")
-        parts = REMOTE_DIR.parts
-        create = False
-        path = "/"
-        for d in parts:
-            if d == baddir:
-                create = True
-            if create:
-                logging.info(f"Creating new folder {d} in {path}")
-                proton_create_folder(path, d, True)
-            path = os.path.join(path, d)
+    proton_create_remote_path(REMOTE_DIR)
 
     # Calculate the changes to do on proton_drive
     upload, uploaded, remote_replaced, remote_delete, remote_deleted = calculate_remote_changes(meta, old_meta)
 
     # Run actions for 2 way sync
-    remote_meta = set()
+    remote_meta = dict()
     if TWO_WAY:
-        dir_exists, _ = proton_file_exists(CONFLICT_DIR_REMOTE)
-        if not dir_exists:
-            logging.info(f"Creating conflict directory at {CONFLICT_DIR_REMOTE}")
-            parent_path = CONFLICT_DIR_REMOTE.parent
-            folder_name = CONFLICT_DIR_REMOTE.name
-            proton_create_folder(parent_path, folder_name)
-        logging.info(f"Starting crawl of {REMOTE_DIR}")
-        start_crawl = time.perf_counter()
-        remote_meta = remote_crawl()
-        logging.info(f"Finished crawl of {REMOTE_DIR}")
-        logging.debug(f"Remote crawl results {remote_meta}")
-        end_crawl = time.perf_counter()
-        duration = end_crawl - start_crawl
-        logging.debug(f"Remote directory crawl completed in {duration:.4f} seconds.")
-        logging.debug(f"Scanned {len(remote_meta)} remote items into the remote meta set.")
+        proton_create_remote_path(CONFLICT_DIR_REMOTE) #Create conflict dir if necessary
+        if WATCH_DIR: #Create watch dir if necessary
+            proton_create_remote_path(WATCH_DIR)
+        if TRUST_REMOTE_STATE_FILE:
+            logging.info("Attempting to load remote state file")
+            with tempfile.TemporaryDirectory() as tmpdir_str:
+            # Convert the string path to a Path object
+                tmpdir = Path(tmpdir_str)
+                temp_state_path = tmpdir / STATE_FILE_NAME
+                
+                # 2. Download your remote file to the temp path
+                proton_download(REMOTE_DIR / STATE_FILE_NAME, tmpdir)
+                if temp_state_path.exists():
+                    remote_meta = load_state_file(temp_state_path)
+                    if remote_meta:
+                        logging.debug(f"Loaded {len(remote_meta)} items from remote state file.")
+                else:
+                    logging.info("No remote state file exists. Crawling remote directory.")
+        if not remote_meta:
+            logging.info(f"Starting crawl of {REMOTE_DIR}")
+            start_crawl = time.perf_counter()
+            remote_meta = remote_crawl()
+            logging.info(f"Finished crawl of {REMOTE_DIR}")
+            logging.debug(f"Remote crawl results {remote_meta}")
+            end_crawl = time.perf_counter()
+            duration = end_crawl - start_crawl
+            logging.debug(f"Remote directory crawl completed in {duration:.4f} seconds.")
+            logging.debug(f"Scanned {len(remote_meta)} remote items into the remote meta set.")
+        elif WATCH_DIR:
+            logging.info(f"Starting crawl of {WATCH_DIR}")
+            start_crawl = time.perf_counter()
+            watch_meta = remote_crawl(WATCH_DIR)
+            logging.info(f"Finished crawl of {WATCH_DIR}")
+            logging.debug(f"Remote crawl results {watch_meta}")
+            end_crawl = time.perf_counter()
+            duration = end_crawl - start_crawl
+            logging.debug(f"Watch directory crawl completed in {duration:.4f} seconds.")
+            logging.debug(f"Scanned {len(watch_meta)} more items into the remote meta set.")
+            remote_meta.update(watch_meta)
+            # Remove files deleted from the watch dir after last sync from remote meta
+            for path in list(remote_meta.keys()):
+                if path.is_relative_to(WATCH_DIR) and path not in watch_meta:
+                    del remote_meta[path]
+            
 
         # Calculate the changes to do in the local folder 
         download, all_downloads, downloaded, local_replaced, local_delete, local_deleted = calculate_local_changes(meta, old_meta, remote_meta)
-        num_conflicts, false_conflicts, new_uploads = resolve_conflicts(download, upload, local_delete, remote_delete)
-        upload |= new_uploads
+        num_conflicts, false_conflicts = resolve_conflicts(download, upload, local_delete, remote_delete)
         uploaded -= false_conflicts
         downloaded -= false_conflicts
         
