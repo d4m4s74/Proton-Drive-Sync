@@ -101,7 +101,7 @@ def proton_download(src, dest, file_action='remove', dir_action='merge', fail=Fa
                 return False, data.get('failures', 'Unknown download failure')
             return True, data
         except json.JSONDecodeError:
-            return True, result.stdout.strip()
+            return False, result.stdout.strip()
 
 def proton_trash(path, fail=False):
     cmd = ['filesystem', 'trash', str(path), '-j']
@@ -670,7 +670,8 @@ def main():
     else:
         FIRST_RUN = True
         logging.info(f"State file empty or not found, attempting to load remote state file")
-        if proton_file_exists(REMOTE_DIR / STATE_FILE_NAME):
+        file_exists, _ = proton_file_exists(REMOTE_DIR / STATE_FILE_NAME)
+        if file_exists:
             proton_download(REMOTE_DIR / STATE_FILE_NAME, LOCAL_DIR)
             old_meta = load_state_file(STATE_FILE)
     if not old_meta:
@@ -744,7 +745,7 @@ def main():
             remote_meta.update(watch_meta)
             # Remove files deleted from the watch dir after last sync from remote meta
             for path in list(remote_meta.keys()):
-                if path.is_relative_to(WATCH_DIR) and path not in watch_meta:
+                if local_path_to_remote(path).is_relative_to(WATCH_DIR) and path not in watch_meta:
                     del remote_meta[path]
             
 
