@@ -233,7 +233,7 @@ def local_walk():
             meta[path] = FileNode(type='f', mtime=int(path.stat().st_mtime), size=path.stat().st_size)
         for name in dirs:
             path = root / name
-            if path == CONFLICT_DIR or path == WATCH_DIR:
+            if path == CONFLICT_DIR or path == remote_path_to_local(WATCH_DIR):
                 continue  # skip tracking conflict dir or watch dir itself
             meta[path] = FileNode(type='d', mtime=0, size=0)
     return meta
