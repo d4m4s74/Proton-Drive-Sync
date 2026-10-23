@@ -233,8 +233,8 @@ def local_walk():
             meta[path] = FileNode(type='f', mtime=int(path.stat().st_mtime), size=path.stat().st_size)
         for name in dirs:
             path = root / name
-            if path == CONFLICT_DIR:
-                continue  # skip tracking conflict dir itself
+            if path == CONFLICT_DIR or path == WATCH_DIR:
+                continue  # skip tracking conflict dir or watch dir itself
             meta[path] = FileNode(type='d', mtime=0, size=0)
     return meta
 
@@ -717,7 +717,7 @@ def main():
                 # 2. Download your remote file to the temp path
                 proton_download(REMOTE_DIR / STATE_FILE_NAME, tmpdir)
                 if temp_state_path.exists():
-                    remote_meta = load_state_file(temp_state_path)
+                    remote_meta = load_state_file(temp_state_path, remote=True)
                     if remote_meta:
                         logging.debug(f"Loaded {len(remote_meta)} items from remote state file.")
                 else:
