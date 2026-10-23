@@ -101,7 +101,7 @@ def proton_download(src, dest, file_action='remove', dir_action='merge', fail=Fa
             data = json.loads(result.stdout)
             # Optional extra check: sometimes CLI exits 0 with JSON but logs failures inside the JSON
             if data.get('failedItems', 0) > 0:
-                logging.error(f"File/folder {src} download failed: {data.get('failures', 'Unknown upload failure')}")
+                logging.error(f"File/folder {src} download failed: {data.get('failures', 'Unknown download failure')}")
                 return False, data.get('failures', 'Unknown download failure')
             return True, data
         except json.JSONDecodeError:
@@ -806,7 +806,9 @@ def main():
         # If the file's parent is the root REMOTE_DIR, target is LOCAL_DIR. Otherwise, map it.
         target_folder = file.parent
         logging.info(f"Downloading {server_path} to {target_folder}")
-        result = proton_download(server_path, target_folder, fail=True)
+        success, result = proton_download(server_path, target_folder, fail=False)
+        if not success:
+            logging.warning(f"File or folder {file} listed in remote state file but not downloaded.\n{result}")
 
     # Restore mtimes for downloaded files
     logging.debug("Restoring modification time for downloaded files")
