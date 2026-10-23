@@ -80,6 +80,9 @@ def proton_upload(src, dest, file_action='replace', dir_action='merge', skip_thu
     else:
         try:
             data = json.loads(result.stdout)
+            if data.get('failedItems', 0) > 0:
+                logging.error(f"File/folder {src} upload failed: {data.get('failures', 'Unknown upload failure')}")
+                return False, data.get('failures', 'Unknown upload failure')
             return True, data
         except json.JSONDecodeError:
             return False, result.stdout.strip()
@@ -98,6 +101,7 @@ def proton_download(src, dest, file_action='remove', dir_action='merge', fail=Fa
             data = json.loads(result.stdout)
             # Optional extra check: sometimes CLI exits 0 with JSON but logs failures inside the JSON
             if data.get('failedItems', 0) > 0:
+                logging.error(f"File/folder {src} download failed: {data.get('failures', 'Unknown upload failure')}")
                 return False, data.get('failures', 'Unknown download failure')
             return True, data
         except json.JSONDecodeError:
@@ -184,37 +188,50 @@ def load_state_file(path, remote=False, fail=False):
     if path.exists():
         try:
             with path.open("r", encoding="utf-8") as f:
-                meta = dict()
-                file_local_dir = ""
-                override_local_dir = False
-                first_line = f.readline()
-                if first_line:
-                    first_line_parts = first_line.strip().split("::")
-                    if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != str(LOCAL_DIR):
-                        file_local_dir = first_line_parts[1]
-                        override_local_dir = True
-                        if not remote:
-                            logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
-                    elif len(first_line_parts) > 1 and first_line_parts[0] != "i":
-                        # Fallback if the file didn't start with an info header block
-                        path_key = first_line_parts[1]
-                        if first_line_parts[0] == 'f':
-                            meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=int(first_line_parts[2]), size=int(first_line_parts[3]))
+                try:
+                    data=json.load(f)
+                    meta=dict()
+                    root = data.get('root', str(LOCAL_DIR))
+                    if not remote:
+                        if root != str(LOCAL_DIR):
+                            logging.warning(f"Folder location changed from {root} to {LOCAL_DIR}")
+                    for item in data.keys():
+                        if item != 'root':
+                            meta[Path(item.replace(root, str(LOCAL_DIR)))] = FileNode(type=data[item][0], mtime=data[item][1], size=data[item][2])
+                except json.JSONDecodeError: #Falling back to old method
+                    f.seek(0)
+                    meta = dict()
+                    file_local_dir = ""
+                    override_local_dir = False
+                    first_line = f.readline()
+                    if first_line:
+                        first_line_parts = first_line.strip().split("::")
+                        if len(first_line_parts) > 1 and first_line_parts[0] == "i" and first_line_parts[1] != str(LOCAL_DIR):
+                            file_local_dir = first_line_parts[1]
+                            override_local_dir = True
+                            if not remote:
+                                logging.warning(f"Folder location changed from {file_local_dir} to {LOCAL_DIR}")
+                        elif len(first_line_parts) > 1 and first_line_parts[0] != "i":
+                            # Fallback if the file didn't start with an info header block
+                            path_key = first_line_parts[1]
+                            if first_line_parts[0] == 'f':
+                                meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=int(first_line_parts[2]), size=int(first_line_parts[3]))
+                            else:
+                                meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=0, size=0)
+                    for line in f:
+                        parts = line.strip().split("::")
+                        if len(parts) < 2: 
+                            continue
+                        path_key = parts[1]
+                        if override_local_dir:
+                            path_key = path_key.replace(file_local_dir, str(LOCAL_DIR))
+                        if parts[0] == 'f':
+                            meta[Path(path_key)] = FileNode(type=parts[0], mtime=int(parts[2]), size=int(parts[3]))
                         else:
-                            meta[Path(path_key)] = FileNode(type=first_line_parts[0], mtime=0, size=0)
-                for line in f:
-                    parts = line.strip().split("::")
-                    if len(parts) < 2: 
-                        continue
-                    path_key = parts[1]
-                    if override_local_dir:
-                        path_key = path_key.replace(file_local_dir, str(LOCAL_DIR))
-                    if parts[0] == 'f':
-                        meta[Path(path_key)] = FileNode(type=parts[0], mtime=int(parts[2]), size=int(parts[3]))
-                    else:
-                        meta[Path(path_key)] = FileNode(type=parts[0], mtime=0, size=0)
+                            meta[Path(path_key)] = FileNode(type=parts[0], mtime=0, size=0)
             return meta
         except Exception as e:
+            raise
             if not fail:
                 return None
             else:
@@ -817,12 +834,11 @@ def main():
 
     # Save and upload the state file.
     logging.info(f"Saving metadata in {STATE_FILE}")
-    state_file_lines = [
-        f"f::{path}::{node.mtime}::{node.size}" if node.type == "f" else f"d::{path}"
-        for path, node in meta.items()
-    ]
-    payload = f"i::{LOCAL_DIR}\n" + "\n".join(state_file_lines)
-
+    json_ready_meta = dict()
+    for path in meta.keys():
+        json_ready_meta[str(path)] = meta[path]
+    json_ready_meta['root'] = str(LOCAL_DIR)
+    payload = json.dumps(json_ready_meta)
     state_dir = STATE_FILE.parent
     try:
         with tempfile.NamedTemporaryFile("w", dir=state_dir, delete=False, encoding="utf-8") as tf:
