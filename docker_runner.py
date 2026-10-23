@@ -51,7 +51,7 @@ RESOLVE_STRATEGY = os.environ.get("RESOLVE_STRATEGY", "newest").strip('"\'').low
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "quiet").strip('"\'').lower()
 USER = int(os.environ.get("USER",1000))
 GROUP = int(os.environ.get("GROUP",1000))
-TRUST_REMOTE_STATE_FILE = os.environ.get("TRUST_REMOTE_STATE_FILE", "true").lower()
+TRUST_REMOTE_STATE_FILE = "false" if os.environ.get("TRUST_REMOTE_STATE_FILE", "true").lower() in ["false", "0", "no"] else "true"
 WATCH_DIR = os.environ.get("WATCH_DIR", "").strip('"\'')
 
 # Normalize boolean mapping for TOML template translation
@@ -62,7 +62,7 @@ EMPTY_TRASH_TOML = "true" if EMPTY_TRASH_ENV in ["true", "1", "yes"] else "false
 os.makedirs("/app/.cache", exist_ok=True)
 recursive_chown("/app/.cache", uid=USER, gid=GROUP)
 stat_info = os.stat("/data/backup")
-if TWO_WAY_ENV == "true" and stat_info.st_uid != USER:
+if TWO_WAY_TOML == "true" and stat_info.st_uid != USER:
     try:
         os.chown("/data/backup", USER, GROUP)
     except:
@@ -105,7 +105,7 @@ while True:
         recursive_chown("/app/.cache", uid=USER, gid=GROUP)
     # 3. Interactive Login Safety Gate Checklist
     # Using './proton-drive' explicitly to remain relative to our WORKDIR
-    result = subprocess.run(["./proton-drive", "filesystem", "info", "/my-files", "-j"], capture_output=True, text=True, user=USER,group=USER)
+    result = subprocess.run(["./proton-drive", "filesystem", "info", "/my-files", "-j"], capture_output=True, text=True, user=USER,group=GROUP)
     
     if "You need to login first" in result.stderr:
         logged_in = False
@@ -113,6 +113,9 @@ while True:
         logging.warning("   docker exec -it proton-sync /app/proton-drive auth login")
         time.sleep(30)
         continue
+    elif result.returncode != 0:
+        logging.error(f"Unable to run into Proton Drive\n {result.stderr}")
+        sys.exit(1)
 
     # 4. Handle Initial Start-Time Gate Alignment (Fires once on boot)
     if START_HOUR is not None:
