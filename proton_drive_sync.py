@@ -244,9 +244,9 @@ def local_walk():
     meta = dict()
     for root, dirs, files in LOCAL_DIR.walk():
         for name in files:
-            if name == STATE_FILE_NAME or name == ".proton_sync.lock":
-                continue  # Skip tracking the state file itself!
             path = root / name
+            if name == STATE_FILE_NAME or name == ".proton_sync.lock" or path == CONFLICT_DIR / "conflict_summary.txt":
+                continue
             meta[path] = FileNode(type='f', mtime=int(path.stat().st_mtime), size=path.stat().st_size)
         for name in dirs:
             path = root / name
@@ -264,9 +264,9 @@ def remote_crawl(current_remote_path: PurePosixPath = None):
     items = proton_list(current_remote_path)
     for item in items:
         filename = item['name']['value']
-        if filename == STATE_FILE_NAME or filename == ".proton_sync.lock":
-            continue
         item_remote_path = current_remote_path / filename
+        if filename == STATE_FILE_NAME or filename == ".proton_sync.lock" or item_remote_path == CONFLICT_DIR_REMOTE / "conflict_summary.txt":
+            continue
         if item['type'] == "folder":
             item_type = 'd'
             mtime = 0
@@ -279,7 +279,7 @@ def remote_crawl(current_remote_path: PurePosixPath = None):
         
         # Map remote path to local path for the dictionary key
         local_file_path = remote_path_to_local(item_remote_path)
-        if local_file_path != CONFLICT_DIR:
+        if local_file_path != CONFLICT_DIR and local_file_path != WATCH_DIR:
             meta[local_file_path] = FileNode(type=item_type, mtime=mtime, size=size)
             
         if item_type == 'd':
@@ -361,6 +361,7 @@ def calculate_local_changes(meta, old_meta, remote_meta): #calculate things to c
 
 
 def resolve_conflicts(download, upload, local_delete, remote_delete): #note, updates the given dicts.
+    conflict_summary = f"--- {START_TIME} ---\n"
     num_conflicts = 0
     false_conflicts = 0
     #upload vs deletion. Upload always wins.
@@ -368,6 +369,7 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         if name in local_delete and name not in download:
             num_conflicts += 1
             logging.info(f"Conflict deleted file or folder {name} reuploaded to remote")
+            conflict_summary += f"{name.relative_to(LOCAL_DIR)} restored from local\n"
             local_delete.pop(name)
 
     #download vs deletion. download always wins.
@@ -375,9 +377,11 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         if name in remote_delete and name not in upload:
             num_conflicts += 1
             logging.info(f"Conflict deleted file or folder {name} redownloaded from remote")
+            conflict_summary += f"{name.relative_to(LOCAL_DIR)} restored from remote\n"
             remote_delete.pop(name)
 
     def resolve_remote(name):
+        nonlocal conflict_summary
         nonlocal num_conflicts, false_conflicts
         if upload[name].type == 'f' and upload[name] == download[name]: #Unfortunately I am not able to detect if a directory is a false conflict
             logging.info(f"No conflict: local file {name} equal to remote")
@@ -387,11 +391,12 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
             return
         num_conflicts += 1
         old_node = upload[name]
+        timestring = datetime.now().strftime("%Y%m%d%H%M%S")
         if upload[name].type == 'f': 
             filename, ext = name.stem, name.suffix
-            conflict_filename = f"{filename}_{START_TIME}{ext}"
+            conflict_filename = f"{filename}_{timestring}{ext}"
         else:
-            conflict_filename = f"{name.name}_{START_TIME}"
+            conflict_filename = f"{name.name}_{timestring}"
         dst = CONFLICT_DIR / conflict_filename
         shutil.move(name, dst)
         upload.pop(name, None)
@@ -399,8 +404,10 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
             local_delete.pop(name)
         upload[dst] = old_node
         logging.warning(f"Conflict: Local item {name} moved to conflict folder as {conflict_filename}")
+        conflict_summary += f"local {name.relative_to(LOCAL_DIR)} > {CONFLICT_DIR.relative_to(LOCAL_DIR)/conflict_filename}\n"
 
     def resolve_local(name):
+        nonlocal conflict_summary
         nonlocal num_conflicts, false_conflicts
         if upload[name].type == 'f' and upload[name] == download[name]: #Unfortunately I am not able to detect if a directory is a false conflict
             logging.info(f"No conflict: local item {name} equal to remote")
@@ -411,19 +418,26 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         num_conflicts += 1
         remote_node = download[name]
         download.pop(name, None)
+        timestring = datetime.now().strftime("%Y%m%d%H%M%S")
         if remote_node.type == 'f': 
             filename, ext = name.stem, name.suffix
-            conflict_filename = f"{filename}_{START_TIME}{ext}"
+            conflict_filename = f"{filename}_{timestring}{ext}"
         else:
-            conflict_filename = f"{name.name}_{START_TIME}"
+            conflict_filename = f"{name.name}_{timestring}"
         if name in remote_delete:
             remote_delete.pop(name)
-            
-        proton_move_rename(local_path_to_remote(name),CONFLICT_DIR_REMOTE/conflict_filename)
-        
-        local_conflict_destination = CONFLICT_DIR / conflict_filename
-        download[local_conflict_destination] = remote_node
-        logging.warning(f"Conflict: Remote item {name} pushed to conflict folder as {conflict_filename}")
+        try:
+            proton_move_rename(local_path_to_remote(name),CONFLICT_DIR_REMOTE/conflict_filename)
+            local_conflict_destination = CONFLICT_DIR / conflict_filename
+            download[local_conflict_destination] = remote_node
+            logging.warning(f"Conflict: Remote item {name} pushed to conflict folder as {conflict_filename}")
+            conflict_summary += f"local {name.relative_to(LOCAL_DIR)} > {CONFLICT_DIR.relative_to(LOCAL_DIR)/conflict_filename}\n"
+        except ProtonCliError as e:
+            if "Node not found" in str(e):
+                logging.warning(f"Unable to move remote file {local_path_to_remote(name)}, file doesn't exit")
+            else:
+                raise
+
 
     def get_remote_folder_mtime(name):
         remote_path = local_path_to_remote(name)
@@ -463,6 +477,17 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
                 resolve_local(name)
             else:
                 resolve_remote(name)
+    
+    if num_conflicts > 0:
+        summary_file = CONFLICT_DIR / "conflict_summary.txt"
+        # Download existing remote summary if it exists so we prepend to the local copy
+        if proton_file_exists(CONFLICT_DIR_REMOTE / "conflict_summary.txt")[0]:
+            proton_download(CONFLICT_DIR_REMOTE / "conflict_summary.txt", CONFLICT_DIR, fail=False)
+        existing_summary = summary_file.read_text(encoding="utf-8") if summary_file.exists() else ""
+        summary_file.write_text(conflict_summary + existing_summary, encoding="utf-8")
+        proton_upload(summary_file, CONFLICT_DIR_REMOTE, fail=True)
+        
+
         
     return num_conflicts, false_conflicts
 
@@ -552,6 +577,8 @@ def main():
     if not isinstance(TRUST_REMOTE_STATE_FILE, bool):
         TRUST_REMOTE_STATE_FILE = True
 
+    START_TIME = datetime.now().strftime("%Y-%m-%d %H:%M")
+
     WATCH_DIR = None
     if 'watch_dir' in config and config['watch_dir'] != "":
         path = PurePosixPath(config['watch_dir'].replace("${REMOTE_DIR}", str(REMOTE_DIR)))
@@ -565,8 +592,6 @@ def main():
         STATE_FILE = LOCAL_DIR / STATE_FILE_NAME  # Clean native host filesystem fallback
 
     EMPTY_TRASH = config.get('empty_trash', False)
-
-    START_TIME = datetime.now().strftime("%Y%m%d%H%M%S") #used for conflicts
 
     # Prepare local conflict folders for 2-way sync
     if TWO_WAY:
