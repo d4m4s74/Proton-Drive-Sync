@@ -10,9 +10,10 @@ import shutil
 import atexit
 import random
 import tempfile
+import urllib.request
 from pathlib import Path, PurePosixPath
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 FileNode = namedtuple('FileNode', ['type', 'mtime', 'size'])
@@ -178,7 +179,7 @@ def proton_create_remote_path(remote_path):
             if create:
                 logging.info(f"Creating new folder {d} in {path}")
                 proton_create_dir(path, d, True)
-            path = os.path.join(path, d)
+            path = path / d
 
 def proton_empty_trash():
     result = run_proton_cli(['filesystem', 'empty-trash'])
@@ -231,7 +232,6 @@ def load_state_file(path, remote=False, fail=False):
                             meta[Path(path_key)] = FileNode(type=parts[0], mtime=0, size=0)
             return meta
         except Exception as e:
-            raise
             if not fail:
                 return None
             else:
@@ -486,11 +486,44 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
         existing_summary = summary_file.read_text(encoding="utf-8") if summary_file.exists() else ""
         summary_file.write_text(conflict_summary + existing_summary, encoding="utf-8")
         proton_upload(summary_file, CONFLICT_DIR_REMOTE, fail=True)
-        
-
-        
+              
     return num_conflicts, false_conflicts
 
+def send_discord_notification(status: str, message: str):
+    global WEBHOOK_URL, DISCORD_USER_ID
+    if not WEBHOOK_URL:
+        return
+    # Configure appearance based on status
+    color = 65280  # Green for success
+    if status == "FAILURE":
+        color = 16711680  # Red for failure
+        
+    # Construct the JSON payload mapping your bash script design
+    payload = {
+        "embeds": [{
+            "title": f"Sync {status}",
+            "description": message,
+            "color": color,
+            # Modern, future-proof timezone configuration
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        }]
+    }
+    if DISCORD_USER_ID:
+        payload["content"] = f"<@{DISCORD_USER_ID}>"
+    
+    # Format and dispatch the HTTP POST request securely
+    try:
+        req = urllib.request.Request(
+            WEBHOOK_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req) as response:
+            # Check for standard successful HTTP response ranges (200-299)
+            if not (200 <= response.status < 300):
+                print(f"⚠️ Discord returned unexpected status code: {response.status}")
+    except Exception as e:
+        print(f"⚠️ Failed to send Discord notification: {e}")
 
 def main():
     global CONFIG_PATH, CONFLICT_DIR, CONFLICT_DIR_REMOTE, EMPTY_TRASH, FIRST_RUN
@@ -498,6 +531,7 @@ def main():
     global PROTON_DRIVE_BINARY, REMOTE_DIR, REMOTE_LOCK_FILE, RESOLVE_STRATEGY
     global RESOLVE_STRATEGY_OPTIONS, SCRIPT_DIR, START_TIME, STATE_FILE, TWO_WAY
     global STATE_FILE_NAME, TRUST_REMOTE_STATE_FILE, WATCH_DIR
+    global WEBHOOK_URL, DISCORD_USER_ID
 
 
     SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -572,6 +606,7 @@ def main():
         TWO_WAY = False
     if TWO_WAY and is_path_readonly(LOCAL_DIR):
         logging.error(f"{LOCAL_DIR} mounted as read-only. Unable to run Two-Way sync. Exited to protect remote files.")
+        send_discord_notification("FAILURE", f"{LOCAL_DIR} mounted as read-only. Unable to run Two-Way sync. Exited to protect remote files.")
         sys.exit(1)
     TRUST_REMOTE_STATE_FILE = config.get('trust_remote_state_file', False)
     if not isinstance(TRUST_REMOTE_STATE_FILE, bool):
@@ -593,6 +628,9 @@ def main():
 
     EMPTY_TRASH = config.get('empty_trash', False)
 
+    WEBHOOK_URL = config.get('webhook_url', None)
+    DISCORD_USER_ID = str(config.get('discord_user_id', ""))
+
     # Prepare local conflict folders for 2-way sync
     if TWO_WAY:
         RESOLVE_STRATEGY_OPTIONS = {"newest", "local", "remote"}
@@ -607,6 +645,7 @@ def main():
             subprocess.run([PROTON_DRIVE_BINARY, "auth", "login"], check=True)
         else:
             logging.error(f"Proton Drive not logged in. Run 'python3 {sys.argv[0]}' in the terminal to log in")
+            send_discord_notification("FAILURE", f"Proton Drive not logged in. Run 'python3 {sys.argv[0]}' in the terminal to log in")
             sys.exit(1)
 
     # Lock check and locking to prevent two devices syncing at the same time.
@@ -637,6 +676,7 @@ def main():
         waited_seconds += POLL_INTERVAL_SECONDS
     else:
         logging.error(f"Timed out after waiting {MAX_WAIT_SECONDS}s for the remote sync lock to clear. Aborting.")
+        send_discord_notification("FAILURE", f"Timed out after waiting {MAX_WAIT_SECONDS}s for the remote sync lock to clear. Aborting.")
         sys.exit(1)
 
     # Acquire lock
@@ -661,6 +701,7 @@ def main():
         else:
             logging.error(f"Failed to upload remote lock file: {e}")
             Path(local_lock_temp).unlink(missing_ok=True)
+            send_discord_notification("FAILURE", f"Failed to upload remote lock file: {e}")
             sys.exit(1)
     finally:
         Path(local_lock_temp).unlink(missing_ok=True)
@@ -689,17 +730,20 @@ def main():
                     f"Pre-backup hook failed (Exit Code {hook_result.returncode}). Aborting sync execution!\n"
                     f"Stderr: {hook_result.stderr}"
                 )
+                send_discord_notification("FAILURE", f"Pre-backup hook failed (Exit Code {hook_result.returncode}). Aborting sync execution!\nStderr: {hook_result.stderr}")
                 sys.exit(1)
                 
             logging.info("Pre-backup hook completed successfully. Proceeding with sync.")
         except PermissionError:
             logging.error(
-                f"Permission denied executing pre-backup hook: '{BEFORE_RUN_SCRIPT}'. "
+                f"Permission denied executing pre-backup hook: '{BEFORE_RUN_SCRIPT}'. \n"
                 f"Ensure the script has executable permissions (run 'chmod +x {BEFORE_RUN_SCRIPT}'). Aborting sync!"
             )
+            send_discord_notification("FAILURE", f"Permission denied executing pre-backup hook: '{BEFORE_RUN_SCRIPT}'. \nEnsure the script has executable permissions (run 'chmod +x {BEFORE_RUN_SCRIPT}'). Aborting sync!")
             sys.exit(1)
         except Exception as e:
             logging.error(f"Failed to execute pre-backup hook due to an unexpected error: {e}. Aborting sync!")
+            send_discord_notification("FAILURE", f"Failed to execute pre-backup hook due to an unexpected error: {e}. Aborting sync!")
             sys.exit(1)
             
 
@@ -899,13 +943,13 @@ def main():
 
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
     if TWO_WAY:
-        print(
-            f"{timestamp} [STATUS] Synced: {uploaded} uploaded, {downloaded} downloaded, {remote_replaced} replaced in remote folder, {local_replaced} replaced in local folder, {remote_deleted} deleted from remote folder, {local_deleted} deleted from local folder, {num_conflicts} conflicts{', trash emptied' if trash_emptied else ''}."
-        )
+        status_output = f"Synced: {uploaded} uploaded, {downloaded} downloaded, {remote_replaced} replaced in remote folder, {local_replaced} replaced in local folder, {remote_deleted} deleted from remote folder, {local_deleted} deleted from local folder, {num_conflicts} conflicts{', trash emptied' if trash_emptied else ''}."
     else:
-        print(
-            f"{timestamp} [STATUS] Synced: {uploaded} uploaded, {remote_replaced} replaced, {remote_deleted} deleted{', trash emptied' if trash_emptied else ''}."
-        )
+        status_output = f"Synced: {uploaded} uploaded, {remote_replaced} replaced, {remote_deleted} deleted{', trash emptied' if trash_emptied else ''}."
+    print(
+        f"{timestamp} [STATUS] {status_output}"
+    )
+    send_discord_notification("SUCCESS", status_output)
 
 if __name__ == '__main__':
     main()

@@ -58,7 +58,12 @@ This option was added at the request of the Proton Drive team to reduce unnecess
 Used when trust_remote_state_file is set to true (default). Crawls one remote directory on every run to detect files uploaded manually to Proton Drive.
 Set this to the remote path of the directory to watch. It must be a child directory of remote_dir.
 For example: `${REMOTE_DIR}/watch`
-
+### webhook_url (Optional)
+Send yourself a discord message when the script exits.  
+Set this to the Discord Webhook URL of your choice
+Request a webhook URL in the Discord app: https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks 
+### discord_user_id (Optional)
+Set this to your Discord user ID if you want the script to tag you
 
 
 ## Prep
@@ -84,6 +89,9 @@ two_way = false #optional. Setting to true enables 2 way sync between the local 
 # resolve_strategy = "newest" #Optional. Options are "newest", "local" and "remote". Defaults to "newest". losers are stored in ${REMOTE_DIR}/conflict
 # trust_remote_state_file = true # Optional. Disables crawling and uses the remote state file to know what to sync. Misses manual uploads. Defaults to true
 # watch_dir = "${REMOTE_DIR}/watch" # Optional. Only used with trust_remote_state_file. Crawls this folder for manual uploads
+
+# webhook_url = "https://discordapp.com/api/webhooks/..." # Optional, send a discord message when the script exits
+# discord_user_id = 01234567890123456 # Optional: Ping yourself 
 ```
 *The configuration parser naturally interprets and resolves `${HOME}` (user profile paths), `${REMOTE_DIR}` (The remote directory on Proton Drive) and `${SCRIPT_DIR}` (the local directory hosting the script file) for local_dir, proton_drive_binary and proton_drive_cache_dir, and ${REMOTE_DIR} for watch_dir*
 
@@ -201,6 +209,9 @@ services:
       # - LOG_LEVEL=quiet                   # Optional: Options are quiet, info and debug. Defaults to quiet
       # - TRUST_REMOTE_STATE_FILE=true      # Optional: Disables remote crawl (unless there is no state file). Defaults to True
       # - WATCH_DIR=/my-files/backup/watch  # Optional: Only used when using the remote state file. Scans this dir for manually added files.
+      # - WEBHOOK_URL=https://discordapp.com/api/webhooks/...
+      # - DISCORD_USER_ID=01234567890123456
+
     volumes:
       # Map your host local source folder to the container's data workspace
       # For One-Way Sync / Backup Mode (Read-Only)
