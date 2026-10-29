@@ -60,7 +60,7 @@ Set this to the remote path of the directory to watch. It must be a child direct
 For example: `${REMOTE_DIR}/watch`
 ### webhook_url (Optional)
 Send yourself a discord message when the script exits.  
-Set this to the Discord Webhook URL of your choice
+Set this to the Discord Webhook URL of your choice  
 Request a webhook URL in the Discord app: https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks 
 ### discord_user_id (Optional)
 Set this to your Discord user ID if you want the script to tag you
