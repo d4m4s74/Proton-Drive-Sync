@@ -489,6 +489,70 @@ def resolve_conflicts(download, upload, local_delete, remote_delete): #note, upd
               
     return num_conflicts, false_conflicts
 
+def pre_backup_hook():
+        # Run hook script before running bakup
+    BEFORE_RUN_SCRIPT = SCRIPT_DIR / "before_run.sh"
+
+    # Check if the file exists
+    if BEFORE_RUN_SCRIPT.exists():
+        logging.info(f"Found pre-backup hook script. Executing: {BEFORE_RUN_SCRIPT}")
+        try:
+            # Run the script
+            hook_result = subprocess.run([str(BEFORE_RUN_SCRIPT)], capture_output=True, text=True)
+            logging.debug(f"Pre-backup hook execution results: {hook_result}")
+            
+            # If the hook script fails (exit code not 0) halt sync to protect data!
+            if hook_result.returncode != 0:
+                logging.error(
+                    f"Pre-backup hook failed (Exit Code {hook_result.returncode}). Aborting sync execution!\n"
+                    f"Stderr: {hook_result.stderr}"
+                )
+                send_discord_notification("FAILURE", f"Pre-backup hook failed (Exit Code {hook_result.returncode}). Aborting sync execution!\nStderr: {hook_result.stderr}")
+                sys.exit(1)
+                
+            logging.info("Pre-backup hook completed successfully. Proceeding with sync.")
+        except PermissionError:
+            logging.error(
+                f"Permission denied executing pre-backup hook: '{BEFORE_RUN_SCRIPT}'. \n"
+                f"Ensure the script has executable permissions (run 'chmod +x {BEFORE_RUN_SCRIPT}'). Aborting sync!"
+            )
+            send_discord_notification("FAILURE", f"Permission denied executing pre-backup hook: '{BEFORE_RUN_SCRIPT}'. \nEnsure the script has executable permissions (run 'chmod +x {BEFORE_RUN_SCRIPT}'). Aborting sync!")
+            sys.exit(1)
+        except Exception as e:
+            logging.error(f"Failed to execute pre-backup hook due to an unexpected error: {e}. Aborting sync!")
+            send_discord_notification("FAILURE", f"Failed to execute pre-backup hook due to an unexpected error: {e}. Aborting sync!")
+            sys.exit(1)
+
+def post_backup_hook():
+    # Run hook script after successful backup execution
+    AFTER_RUN_SCRIPT = SCRIPT_DIR / "after_run.sh"
+
+    if not SCRIPT_SUCCEEDED and not POST_BACKUP_ON_FAILURE:
+        return
+
+    if AFTER_RUN_SCRIPT.exists():
+        logging.info(f"Found post-backup hook script. Executing: {AFTER_RUN_SCRIPT}")
+        try:
+            hook_result = subprocess.run([str(AFTER_RUN_SCRIPT)], capture_output=True, text=True)
+            logging.debug(f"Post-backup hook execution results: {hook_result}")
+            
+            if hook_result.returncode != 0:
+                logging.error(
+                    f"Post-backup hook failed (Exit Code {hook_result.returncode}).\n"
+                    f"Stderr: {hook_result.stderr}"
+                )
+            else:
+                logging.info("Post-backup hook completed successfully.")
+        except PermissionError:
+            logging.error(
+                f"Permission denied executing post-backup hook: '{AFTER_RUN_SCRIPT}'. \n"
+                f"Ensure the script has executable permissions (run 'chmod +x {AFTER_RUN_SCRIPT}'). Aborting sync!"
+            )
+            send_discord_notification("FAILURE", f"Permission denied executing post-backup hook: '{AFTER_RUN_SCRIPT}'. \nEnsure the script has executable permissions (run 'chmod +x {AFTER_RUN_SCRIPT}').")
+        except Exception as e:
+            logging.error(f"Failed to execute post-backup hook due to an unexpected error: {e}")
+            send_discord_notification("FAILURE", f"Failed to execute post-backup hook due to an unexpected error: {e}.")
+
 def send_discord_notification(status: str, message: str):
     global WEBHOOK_URL, DISCORD_USER_ID
     if not WEBHOOK_URL:
@@ -531,8 +595,10 @@ def main():
     global PROTON_DRIVE_BINARY, REMOTE_DIR, REMOTE_LOCK_FILE, RESOLVE_STRATEGY
     global RESOLVE_STRATEGY_OPTIONS, SCRIPT_DIR, START_TIME, STATE_FILE, TWO_WAY
     global STATE_FILE_NAME, TRUST_REMOTE_STATE_FILE, WATCH_DIR
-    global WEBHOOK_URL, DISCORD_USER_ID
+    global WEBHOOK_URL, DISCORD_USER_ID, SCRIPT_SUCCEEDED, POST_BACKUP_ON_FAILURE
 
+    SCRIPT_SUCCEEDED = False
+    POST_BACKUP_ON_FAILURE = False
 
     SCRIPT_DIR = Path(__file__).parent.resolve()
     CONFIG_PATH = SCRIPT_DIR / "config.toml"
@@ -631,6 +697,11 @@ def main():
     WEBHOOK_URL = config.get('webhook_url', None)
     DISCORD_USER_ID = str(config.get('discord_user_id', ""))
 
+
+    POST_BACKUP_ON_FAILURE = config.get('post_backup_on_failure', False)
+    if not isinstance(POST_BACKUP_ON_FAILURE, bool):
+        POST_BACKUP_ON_FAILURE = False
+
     # Prepare local conflict folders for 2-way sync
     if TWO_WAY:
         RESOLVE_STRATEGY_OPTIONS = {"newest", "local", "remote"}
@@ -713,39 +784,11 @@ def main():
     # Register it down here after definition
     atexit.register(cleanup_remote_lock)
 
-    # Run hook script before running bakup
-    BEFORE_RUN_SCRIPT = SCRIPT_DIR / "before_run.sh"
+    # Register post backup hook
+    atexit.register(post_backup_hook)
 
-    # Check if the file exists
-    if BEFORE_RUN_SCRIPT.exists():
-        logging.info(f"Found pre-backup hook script. Executing: {BEFORE_RUN_SCRIPT}")
-        try:
-            # Run the script
-            hook_result = subprocess.run([str(BEFORE_RUN_SCRIPT)], capture_output=True, text=True)
-            logging.debug(f"Pre-backup hook execution results: {hook_result}")
-            
-            # If the hook script fails (exit code not 0) halt sync to protect data!
-            if hook_result.returncode != 0:
-                logging.error(
-                    f"Pre-backup hook failed (Exit Code {hook_result.returncode}). Aborting sync execution!\n"
-                    f"Stderr: {hook_result.stderr}"
-                )
-                send_discord_notification("FAILURE", f"Pre-backup hook failed (Exit Code {hook_result.returncode}). Aborting sync execution!\nStderr: {hook_result.stderr}")
-                sys.exit(1)
-                
-            logging.info("Pre-backup hook completed successfully. Proceeding with sync.")
-        except PermissionError:
-            logging.error(
-                f"Permission denied executing pre-backup hook: '{BEFORE_RUN_SCRIPT}'. \n"
-                f"Ensure the script has executable permissions (run 'chmod +x {BEFORE_RUN_SCRIPT}'). Aborting sync!"
-            )
-            send_discord_notification("FAILURE", f"Permission denied executing pre-backup hook: '{BEFORE_RUN_SCRIPT}'. \nEnsure the script has executable permissions (run 'chmod +x {BEFORE_RUN_SCRIPT}'). Aborting sync!")
-            sys.exit(1)
-        except Exception as e:
-            logging.error(f"Failed to execute pre-backup hook due to an unexpected error: {e}. Aborting sync!")
-            send_discord_notification("FAILURE", f"Failed to execute pre-backup hook due to an unexpected error: {e}. Aborting sync!")
-            sys.exit(1)
-            
+    # Run the pre_backup_hook script
+    pre_backup_hook()     
 
 
     # Load state file
@@ -950,6 +993,6 @@ def main():
         f"{timestamp} [STATUS] {status_output}"
     )
     send_discord_notification("SUCCESS", status_output)
-
+    SCRIPT_SUCCEEDED = True
 if __name__ == '__main__':
     main()

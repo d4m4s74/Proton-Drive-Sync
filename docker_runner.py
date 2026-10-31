@@ -55,7 +55,7 @@ TRUST_REMOTE_STATE_FILE = "false" if os.environ.get("TRUST_REMOTE_STATE_FILE", "
 WATCH_DIR = os.environ.get("WATCH_DIR", "").strip('"\'')
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").strip('"\'')
 DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID", "").strip('"\'')
-
+POST_BACKUP_ON_FAILURE = "true" if os.environ.get("POST_BACKUP_ON_FAILURE", "false").lower() in ["true", "1", "yes"] else "false"
 # Normalize boolean mapping for TOML template translation
 EMPTY_TRASH_TOML = "true" if EMPTY_TRASH_ENV in ["true", "1", "yes"] else "false"
 
@@ -82,6 +82,7 @@ two_way = {TWO_WAY_TOML}
 resolve_strategy = "{RESOLVE_STRATEGY}"
 trust_remote_state_file = {TRUST_REMOTE_STATE_FILE}
 watch_dir = "{WATCH_DIR}"
+post_backup_on_failure = {POST_BACKUP_ON_FAILURE}
 webhook_url = "{WEBHOOK_URL}"
 discord_user_id = "{DISCORD_USER_ID}"
 """

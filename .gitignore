@@ -5,4 +5,6 @@ test_data/
 test/
 notes
 test_proton_sync.py
+before_run.sh
+after_run.sh
 __pycache__

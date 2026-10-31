@@ -58,6 +58,8 @@ This option was added at the request of the Proton Drive team to reduce unnecess
 Used when trust_remote_state_file is set to true (default). Crawls one remote directory on every run to detect files uploaded manually to Proton Drive.
 Set this to the remote path of the directory to watch. It must be a child directory of remote_dir.
 For example: `${REMOTE_DIR}/watch`
+### post_backup_on_failure (Optional)
+Used with Post Backup Hooks. When enabled run the post backup hook even if the script fails.
 ### webhook_url (Optional)
 Send yourself a discord message when the script exits.  
 Set this to the Discord Webhook URL of your choice  
@@ -89,6 +91,8 @@ two_way = false #optional. Setting to true enables 2 way sync between the local 
 # resolve_strategy = "newest" #Optional. Options are "newest", "local" and "remote". Defaults to "newest". losers are stored in ${REMOTE_DIR}/conflict
 # trust_remote_state_file = true # Optional. Disables crawling and uses the remote state file to know what to sync. Misses manual uploads. Defaults to true
 # watch_dir = "${REMOTE_DIR}/watch" # Optional. Only used with trust_remote_state_file. Crawls this folder for manual uploads
+
+# post_backup_on_failure = false # Optional. Runs the post backup hook even if the main script fails
 
 # webhook_url = "https://discordapp.com/api/webhooks/..." # Optional, send a discord message when the script exits
 # discord_user_id = 01234567890123456 # Optional: Ping yourself 
@@ -122,6 +126,46 @@ Make the hook file executable on your device:
 chmod +x before_run.sh
 ```
 *Note: If the `before_run.sh` script exits with an error status code (anything other than `0`), the master Python engine will automatically abort the synchronization process to protect your remote cloud backups from corruption.*
+
+
+## Post-Backup Hooks (Optional)
+
+The sync engine also supports executing an optional custom shell script immediately after the synchronization cycle ends. This can be used to clean up files created in the pre-backup hook or taking applications back out of mainainance mode.  
+By default the script only runs if the sync succeeded, but you can enable the config variable `post_backup_on_failure` to always run.
+
+If a script file named `after_run.sh` is placed inside the same directory as `proton_drive_sync.py`, it will be executed automatically.
+
+### Example: Nextcloud maintainance mode
+Create a `before_run.sh` file:
+```bash
+nano before_run.sh
+```
+
+Enable maintainance mode (Ensure the file begins with a proper Shebang interpreter declaration):
+```bash
+#!/bin/bash
+# --- SET MAINTENANCE MODE ---
+echo "Activating Nextcloud Maintenance Mode..."
+docker exec --user www-data nextcloud-app php occ maintenance:mode --on
+```
+
+Create an `after_run.sh` file:
+```bash
+nano after_run.sh
+```
+
+Disable maintainance mode:
+```bash
+#!/bin/bash
+# --- SET MAINTENANCE MODE ---
+echo "🔓 Ensuring Nextcloud Maintenance Mode is disabled..."
+docker exec --user www-data nextcloud-app php occ maintenance:mode --off || true
+```
+
+Make the hook files executable on your device:
+```bash
+chmod +x after_run.sh before_run.sh
+```
 
 
 ## Migrating from the old bash script
@@ -209,6 +253,7 @@ services:
       # - LOG_LEVEL=quiet                   # Optional: Options are quiet, info and debug. Defaults to quiet
       # - TRUST_REMOTE_STATE_FILE=true      # Optional: Disables remote crawl (unless there is no state file). Defaults to True
       # - WATCH_DIR=/my-files/backup/watch  # Optional: Only used when using the remote state file. Scans this dir for manually added files.
+      # - POST_BACKUP_ON_FAILURE=false      # Optional: Runs the post backup hook even if the sync fails.
       # - WEBHOOK_URL=https://discordapp.com/api/webhooks/...
       # - DISCORD_USER_ID=01234567890123456
 
