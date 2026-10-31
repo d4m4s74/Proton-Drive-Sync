@@ -136,6 +136,7 @@ By default the script only runs if the sync succeeded, but you can enable the co
 If a script file named `after_run.sh` is placed inside the same directory as `proton_drive_sync.py`, it will be executed automatically.
 
 ### Example: Nextcloud maintainance mode
+Note: This example only works when the script runs on your device, not through docker.  
 Create a `before_run.sh` file:
 ```bash
 nano before_run.sh
@@ -267,8 +268,9 @@ services:
       # Map a local folder to persist your authentication and state file across updates
       - ./proton_sync:/app/.cache
       
-      # Optional: Map a pre-backup hook
+      # Optional: Map a pre- and post-backup hook
       # - ./before_run.sh:/app/before_run.sh
+      # - ./after_run.sh:/app/after_run.sh
 ```
 Modify the file for your local setup.
 
